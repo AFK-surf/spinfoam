@@ -8,6 +8,7 @@ use tokio::{
 };
 pub struct Client {
     pub child: Child,
+    pub info: Value,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
     next: u64,
@@ -30,6 +31,7 @@ impl Client {
         let output = BufReader::new(child.stdout.take().unwrap());
         let mut client = Self {
             child,
+            info: Value::Null,
             input,
             output,
             next: 0,
@@ -39,6 +41,7 @@ impl Client {
             .call("sf.initialize", json!({"protocol_version":1}))
             .await;
         assert_eq!(init["protocol_version"], 1);
+        client.info = init;
         client
     }
     pub async fn write(&mut self, value: Value) {

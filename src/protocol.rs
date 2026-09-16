@@ -16,13 +16,16 @@ use tokio_util::sync::CancellationToken;
 
 pub struct Service {
     pub runtime: Rc<Runtime>,
+    pub builds: Rc<crate::build::Builds>,
     initialized: Cell<bool>,
     pub shutdown: CancellationToken,
 }
 impl Service {
-    pub fn new(out: Outbox) -> Rc<Self> {
+    pub async fn new(out: Outbox, config: Option<crate::build::Config>) -> Rc<Self> {
+        let builds = crate::build::Builds::new(config, out.clone()).await;
         Rc::new(Self {
             runtime: Runtime::new(out),
+            builds,
             initialized: Cell::new(false),
             shutdown: CancellationToken::new(),
         })
@@ -44,7 +47,7 @@ impl Service {
             return Ok(
                 json!({"protocol_version":1,"sdk_version":1,"session_id":self.runtime.host.session,
                 "target":"linux-x86_64","async_ebpf_revision":crate::ASYNC_EBPF_REVISION,
-                "compiler":{"available":false,"reason":"compiler service not configured"},
+                "compiler":self.builds.info(),
                 "limits":{"frame_bytes":MAX_FRAME,"value_bytes":crate::helpers::MAX_VALUE_BYTES,"mailbox_entries":32,"mailbox_bytes":32768,"handles":128},
                 "memory_target_bytes":1_000_000,"memory_target_enforced":false}),
             );
@@ -61,14 +64,25 @@ impl Service {
                 #[derive(Deserialize)]
                 #[serde(deny_unknown_fields)]
                 struct Load {
-                    elf: String,
+                    #[serde(default)]
+                    elf: Option<String>,
+                    #[serde(default)]
+                    artifact_id: Option<String>,
                     #[serde(default)]
                     config: Value,
                     #[serde(default)]
                     capabilities: Vec<Capability>,
                 }
                 let load: Load = decode(params)?;
-                let bytes = STANDARD.decode(load.elf).map_err(RpcError::params)?;
+                let bytes = match (load.elf, load.artifact_id) {
+                    (Some(elf), None) => STANDARD.decode(elf).map_err(RpcError::params)?,
+                    (None, Some(id)) => self.builds.bytes(&id)?,
+                    _ => {
+                        return Err(RpcError::params(
+                            "provide exactly one of elf and artifact_id",
+                        ));
+                    }
+                };
                 self.runtime
                     .load(bytes, load.config, load.capabilities)
                     .await
@@ -130,16 +144,29 @@ impl Service {
                 empty(params)?;
                 Ok(json!({"shutdown":true}))
             }
-            "sf.build.submit" | "sf.build.status" | "sf.build.cancel" | "sf.artifact.get" => {
-                Err(RpcError::new(
-                    -32020,
-                    "SANDBOX_UNAVAILABLE",
-                    "compiler service not configured",
-                ))
+            "sf.build.submit" => self.builds.submit(params),
+            "sf.build.status" => self.builds.status(&build_id(params)?),
+            "sf.build.cancel" => self.builds.cancel(&build_id(params)?).await,
+            "sf.artifact.get" => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Artifact {
+                    artifact_id: String,
+                }
+                self.builds
+                    .artifact(&decode::<Artifact>(params)?.artifact_id)
             }
             _ => Err(RpcError::new(-32601, "METHOD_NOT_FOUND", "unknown method")),
         }
     }
+}
+fn build_id(params: Value) -> Result<String, RpcError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Id {
+        build_id: String,
+    }
+    Ok(decode::<Id>(params)?.build_id)
 }
 fn page_size() -> usize {
     100
@@ -207,10 +234,17 @@ impl Drop for ActiveId {
 
 pub async fn serve<R: AsyncRead + Unpin, W: AsyncWrite + Unpin + 'static>(
     input: R,
+    output: W,
+) -> anyhow::Result<()> {
+    serve_with_config(input, output, None).await
+}
+pub async fn serve_with_config<R: AsyncRead + Unpin, W: AsyncWrite + Unpin + 'static>(
+    input: R,
     mut output: W,
+    config: Option<crate::build::Config>,
 ) -> anyhow::Result<()> {
     let out = Outbox::default();
-    let service = Service::new(out.clone());
+    let service = Service::new(out.clone(), config).await;
     let writer_out = out.clone();
     let writer = tokio::task::spawn_local(async move {
         while let Some(frame) = writer_out.next().await {
@@ -282,6 +316,7 @@ pub async fn serve<R: AsyncRead + Unpin, W: AsyncWrite + Unpin + 'static>(
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     service.runtime.shutdown().await;
+    service.builds.shutdown().await;
     out.closed.cancel();
     let mut writer = writer;
     match tokio::time::timeout(Duration::from_secs(2), &mut writer).await {
