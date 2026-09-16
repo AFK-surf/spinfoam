@@ -1,3 +1,7 @@
+#[cfg(target_os = "linux")]
+pub mod sandbox;
+#[cfg(not(target_os = "linux"))]
+#[path = "sandbox_unavailable.rs"]
 pub mod sandbox;
 pub mod toolchain;
 use crate::{

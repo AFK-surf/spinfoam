@@ -46,7 +46,7 @@ impl Service {
             }
             return Ok(
                 json!({"protocol_version":1,"sdk_version":1,"session_id":self.runtime.host.session,
-                "target":"linux-x86_64","async_ebpf_revision":crate::ASYNC_EBPF_REVISION,
+                "target":format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),"async_ebpf_revision":crate::ASYNC_EBPF_REVISION,
                 "compiler":self.builds.info(),
                 "limits":{"frame_bytes":MAX_FRAME,"value_bytes":crate::helpers::MAX_VALUE_BYTES,"mailbox_entries":32,"mailbox_bytes":32768,"handles":128},
                 "memory_target_bytes":1_000_000,"memory_target_enforced":false}),

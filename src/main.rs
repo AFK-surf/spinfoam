@@ -37,8 +37,11 @@ fn main() -> anyhow::Result<()> {
         std::fs::write(path, serde_json::to_vec_pretty(&manifest)?)?;
         return Ok(());
     }
-    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        anyhow::bail!("spinfoam currently qualifies Linux x86_64 only");
+    if !cfg!(all(
+        any(target_os = "linux", target_os = "macos"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )) {
+        anyhow::bail!("spinfoam requires Linux or macOS on x86_64 or aarch64");
     }
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

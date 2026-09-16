@@ -89,7 +89,10 @@ pub fn filter() -> Vec<u8> {
     let mut p: Vec<libc::sock_filter> = Vec::new();
     let mut ins = |code: u16, jt: u8, jf: u8, k: u32| p.push(libc::sock_filter { code, jt, jf, k });
     ins(0x20, 0, 0, 4);
+    #[cfg(target_arch = "x86_64")]
     ins(0x15, 1, 0, 0xc000003e);
+    #[cfg(target_arch = "aarch64")]
+    ins(0x15, 1, 0, 0xc00000b7);
     ins(0x06, 0, 0, KILL);
     ins(0x20, 0, 0, 0);
     ins(0x15, 0, 1, libc::SYS_clone3 as u32);
@@ -99,11 +102,14 @@ pub fn filter() -> Vec<u8> {
         libc::SYS_write,
         libc::SYS_readv,
         libc::SYS_writev,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_open,
         libc::SYS_openat,
         libc::SYS_close,
         libc::SYS_close_range,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_stat,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_lstat,
         libc::SYS_fstat,
         libc::SYS_newfstatat,
@@ -123,11 +129,13 @@ pub fn filter() -> Vec<u8> {
         libc::SYS_rt_sigsuspend,
         libc::SYS_rt_sigtimedwait,
         libc::SYS_sigaltstack,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_access,
         libc::SYS_faccessat,
         libc::SYS_faccessat2,
         libc::SYS_getcwd,
         libc::SYS_chdir,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_readlink,
         libc::SYS_readlinkat,
         libc::SYS_uname,
@@ -138,6 +146,7 @@ pub fn filter() -> Vec<u8> {
         libc::SYS_geteuid,
         libc::SYS_getgid,
         libc::SYS_getegid,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_arch_prctl,
         libc::SYS_set_tid_address,
         libc::SYS_set_robust_list,
@@ -149,18 +158,23 @@ pub fn filter() -> Vec<u8> {
         libc::SYS_futex,
         libc::SYS_clock_gettime,
         libc::SYS_gettimeofday,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_time,
         libc::SYS_sched_getaffinity,
         libc::SYS_sched_yield,
         libc::SYS_ioctl,
         libc::SYS_fcntl,
         libc::SYS_dup,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_dup2,
         libc::SYS_dup3,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_pipe,
         libc::SYS_pipe2,
         libc::SYS_clone,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_vfork,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_fork,
         libc::SYS_wait4,
         libc::SYS_waitid,
@@ -174,16 +188,20 @@ pub fn filter() -> Vec<u8> {
         libc::SYS_clock_nanosleep,
         libc::SYS_restart_syscall,
         libc::SYS_getdents64,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_mkdir,
         libc::SYS_mkdirat,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_unlink,
         libc::SYS_unlinkat,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_rename,
         libc::SYS_renameat,
         libc::SYS_renameat2,
         libc::SYS_truncate,
         libc::SYS_ftruncate,
         libc::SYS_fchmod,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_chmod,
         libc::SYS_umask,
         libc::SYS_fsync,
@@ -193,8 +211,10 @@ pub fn filter() -> Vec<u8> {
         libc::SYS_getrusage,
         libc::SYS_sysinfo,
         libc::SYS_prctl,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_poll,
         libc::SYS_ppoll,
+        #[cfg(target_arch = "x86_64")]
         libc::SYS_select,
         libc::SYS_pselect6,
     ];

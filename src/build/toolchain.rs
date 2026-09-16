@@ -62,6 +62,9 @@ fn version(path: &Path) -> anyhow::Result<String> {
 }
 impl Toolchain {
     pub fn discover() -> anyhow::Result<Self> {
+        if !cfg!(target_os = "linux") {
+            bail!("sandboxed compilation currently requires Linux");
+        }
         let clang = FilePin::new(resolve("clang")?)?;
         let llc = FilePin::new(resolve("llc")?)?;
         let bwrap = FilePin::new(resolve("bwrap")?)?;

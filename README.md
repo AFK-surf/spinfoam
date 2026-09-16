@@ -6,7 +6,9 @@ bidirectional JSON-RPC over stdio. Each loaded object is independent. The embedd
 owns external services, credentials, persistence and distributed orchestration.
 
 The async-ebpf dependency is pinned directly to GitHub commit
-`7e8a7cbce195d68a1d579608b7a28b55f6fce7fd`. Linux x86_64 is the qualified target.
+`7e8a7cbce195d68a1d579608b7a28b55f6fce7fd`. Linux GNU and macOS binaries are built for x86_64 and arm64.
+The upstream formal verification applies to the x86_64 core; it does not
+extend to the arm64 backend. The compiler sandbox requires Linux.
 Less than 1 MB per active program is a design target, **not an enforced quota**.
 
 ## Build and run
@@ -116,3 +118,23 @@ retains a high-water mark after unload.
 See [measured concurrency results](bench/RESULTS.md) for the 10,000- and 20,000-program runs.
 
 [DESIGN.md](DESIGN.md) records the architecture and proposed qualification scope.
+
+
+## Binary builds and releases
+
+Every push and pull request builds all four native packages and runs runtime
+tests on Linux and macOS, on both architectures. Linux packages are built inside
+Debian Bullseye containers and checked for a maximum glibc requirement of 2.31.
+macOS packages target macOS 11 or later. Download development packages from the
+workflow's `binary-*` artifacts.
+
+Pushing a tag publishes a GitHub release only after all builds and tests pass.
+Use version tags such as `v0.1.0`; ordinary branch pushes and pull requests never
+publish releases. Each release contains four tarballs and `SHA256SUMS`.
+The tarballs include the binary, C SDK, examples and documentation.
+
+On macOS, use uploaded eBPF objects or build them on a Linux spinfoam instance;
+the local compiler service reports unavailable. Linux compiler isolation needs
+a recent kernel with cgroup v2 whole-job kill support and a recent bubblewrap
+supporting the required namespace and mount controls. Bullseye specifies binary
+glibc compatibility, not that its stock kernel/bubblewrap supports the sandbox.
