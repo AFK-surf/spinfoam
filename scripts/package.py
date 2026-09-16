@@ -2,7 +2,7 @@
 """Package each native binary together with its SDK and usage documentation."""
 import hashlib
 import json
-import subprocess
+import asyncio
 from pathlib import Path
 import sys
 import tarfile
@@ -16,12 +16,25 @@ requests = [
      "params": {"protocol_version": 1}},
     {"jsonrpc": "2.0", "id": "stop", "method": "sf.shutdown", "params": {}},
 ]
-result = subprocess.run([str(binary.resolve())],
-                        input="".join(json.dumps(r) + "\n" for r in requests),
-                        text=True, capture_output=True, timeout=15, check=True)
-replies = {r["id"]: r for r in map(json.loads, result.stdout.splitlines()) if "id" in r}
-assert replies["init"]["result"]["protocol_version"] == 1, replies
-assert "result" in replies["stop"], replies
+async def smoke():
+    proc = await asyncio.create_subprocess_exec(
+        str(binary.resolve()), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+    replies = {}
+    try:
+        for request in requests:
+            proc.stdin.write((json.dumps(request) + "\n").encode())
+            await proc.stdin.drain()
+            reply = json.loads(await asyncio.wait_for(proc.stdout.readline(), 15))
+            assert reply["id"] == request["id"] and "result" in reply, reply
+            replies[reply["id"]] = reply
+        assert replies["init"]["result"]["protocol_version"] == 1, replies
+        assert await asyncio.wait_for(proc.wait(), 15) == 0
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+
+asyncio.run(smoke())
 dist = Path("dist")
 dist.mkdir(exist_ok=True)
 archive = dist / f"{name}.tar.gz"
