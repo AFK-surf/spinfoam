@@ -117,6 +117,38 @@ async fn sandboxed_compiler_end_to_end() {
         finish(&mut client, build["build_id"].as_str().unwrap()).await["state"],
         "failed"
     );
+    // Exponential preprocessing exceeds the sandbox's resource budget without affecting the host.
+    let mut bomb = String::from("#include \"spinfoam.h\"\n#define A0 1\n");
+    for n in 1..28 {
+        bomb.push_str(&format!("#define A{n} A{}+A{}\n", n - 1, n - 1));
+    }
+    bomb.push_str("SF_MAIN int main(void){return A27;}\n");
+    let build = client
+        .call(
+            "sf.build.submit",
+            json!({"sdk_version":1,"entry":"main.c","files":{"main.c":bomb}}),
+        )
+        .await;
+    assert_eq!(
+        finish(&mut client, build["build_id"].as_str().unwrap()).await["state"],
+        "failed"
+    );
+    // All distributed examples also pass through the actual sandboxed compiler profile.
+    for source in [
+        include_str!("../examples/github_actions.c"),
+        include_str!("../examples/homeassistant.c"),
+        include_str!("../examples/web_keyword.c"),
+        include_str!("../examples/webhook.c"),
+    ] {
+        let build = client
+            .call(
+                "sf.build.submit",
+                json!({"sdk_version":1,"entry":"main.c","files":{"main.c":source}}),
+            )
+            .await;
+        let result = finish(&mut client, build["build_id"].as_str().unwrap()).await;
+        assert_eq!(result["state"], "succeeded", "{result}");
+    }
     // Cancellation is acknowledged only after the launcher and cgroup have been reaped.
     let source = format!(
         "#include \"spinfoam.h\"\nSF_MAIN int main(void){{return {};}}",

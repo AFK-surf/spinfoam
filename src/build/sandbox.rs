@@ -32,6 +32,16 @@ pub struct Cgroup {
 impl Cgroup {
     pub fn new(root: &Path) -> anyhow::Result<Self> {
         let root = std::fs::canonicalize(root)?;
+        let directory = File::open(&root)?;
+        let mut fs = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: fstatfs initializes the supplied statfs on success.
+        let is_cgroup = unsafe {
+            libc::fstatfs(directory.as_raw_fd(), fs.as_mut_ptr()) == 0
+                && fs.assume_init().f_type == libc::CGROUP2_SUPER_MAGIC
+        };
+        if !is_cgroup {
+            bail!("compiler cgroup root is not a cgroup v2 filesystem");
+        }
         let path = root.join(format!("spinfoam-{:032x}", rand::random::<u128>()));
         std::fs::create_dir(&path).context("create delegated build cgroup")?;
         let group = Self { path };
@@ -298,6 +308,12 @@ pub fn launch(path: &Path) -> anyhow::Result<()> {
             "--symlink",
             "/work",
             "/tmp",
+            "--remount-ro",
+            "/",
+            "--remount-ro",
+            "/dev",
+            "--remount-ro",
+            "/proc",
             "--chdir",
             "/work",
             "--seccomp",

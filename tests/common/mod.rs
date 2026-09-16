@@ -9,7 +9,7 @@ use tokio::{
 pub struct Client {
     pub child: Child,
     pub info: Value,
-    input: ChildStdin,
+    input: Option<ChildStdin>,
     output: BufReader<ChildStdout>,
     next: u64,
     saved: VecDeque<Value>,
@@ -32,7 +32,7 @@ impl Client {
         let mut client = Self {
             child,
             info: Value::Null,
-            input,
+            input: Some(input),
             output,
             next: 0,
             saved: VecDeque::new(),
@@ -44,12 +44,20 @@ impl Client {
         client.info = init;
         client
     }
+    pub async fn close_input(&mut self) {
+        self.input.take();
+    }
     pub async fn write(&mut self, value: Value) {
         self.raw(&(serde_json::to_string(&value).unwrap() + "\n"))
             .await;
     }
     pub async fn raw(&mut self, value: &str) {
-        self.input.write_all(value.as_bytes()).await.unwrap();
+        self.input
+            .as_mut()
+            .unwrap()
+            .write_all(value.as_bytes())
+            .await
+            .unwrap();
     }
     pub async fn read(&mut self) -> Value {
         let mut line = String::new();

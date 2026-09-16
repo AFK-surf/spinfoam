@@ -27,9 +27,11 @@ struct CallGuard {
     host: Host,
     id: String,
     sent: bool,
+    object: String,
 }
 impl Drop for CallGuard {
     fn drop(&mut self) {
+        self.host.out.remove_request(&self.object, &self.id);
         if self.host.pending.borrow_mut().remove(&self.id).is_some() && self.sent {
             self.host.out.try_control(
                 json!({"jsonrpc":"2.0","method":"host.cancel","params":{"id":self.id}}),
@@ -75,10 +77,11 @@ impl Host {
             host: self.clone(),
             id: id.clone(),
             sent: false,
+            object: object.to_owned(),
         };
         let request = json!({"jsonrpc":"2.0","id":id,"method":"host.call","params":{
             "object_id":object,"capability":capability,"arguments":arguments,
-            "timeout_ms":timeout_ms,"max_result_bytes":crate::helpers::MAX_VALUE_BYTES
+            "timeout_ms":timeout_ms,"deadline_unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() + timeout_ms as u128,"max_result_bytes":crate::helpers::MAX_VALUE_BYTES
         }});
         let operation = async {
             self.out.data(object, request).await.map_err(|_| CLOSED)?;
@@ -129,5 +132,23 @@ impl Host {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn timeout_removes_a_request_that_has_not_reached_the_writer() {
+        let out = Outbox::default();
+        let host = Host::new(out.clone());
+        assert_eq!(
+            host.call("o1", "read".into(), json!({}), 1).await,
+            Err(TIMEOUT)
+        );
+        assert_eq!(out.stats()["queued_object_bytes"], 0);
+        assert_eq!(host.stats()["pending_host_calls"], 0);
+        let notice: Value = serde_json::from_slice(&out.next().await.unwrap()).unwrap();
+        assert_eq!(notice["method"], "host.cancel");
     }
 }

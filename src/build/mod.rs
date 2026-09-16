@@ -15,7 +15,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::Semaphore, task::JoinHandle};
+use tokio::{
+    sync::{Notify, Semaphore},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 use toolchain::Toolchain;
 
@@ -86,8 +89,23 @@ struct Job {
     result: RefCell<Value>,
     cancel: CancellationToken,
     task: RefCell<Option<JoinHandle<()>>>,
+    done: Notify,
 }
 impl Job {
+    async fn stop(&self) {
+        self.cancel.cancel();
+        loop {
+            let done = self.done.notified();
+            if !matches!(self.state.get(), "queued" | "running") {
+                break;
+            }
+            done.await;
+        }
+        let task = self.task.borrow_mut().take();
+        if let Some(task) = task {
+            let _ = task.await;
+        }
+    }
     fn status(&self) -> Value {
         json!({"build_id":self.id,"state":self.state.get(),"result":*self.result.borrow()})
     }
@@ -208,6 +226,7 @@ impl Builds {
             result: RefCell::new(Value::Null),
             cancel: CancellationToken::new(),
             task: RefCell::new(None),
+            done: Notify::new(),
         });
         if let Some((artifact, hash)) = hit {
             job.state.set("succeeded");
@@ -232,7 +251,11 @@ impl Builds {
                         job.state.set("cancelled");
                     } else {
                         match result {
-                            Ok(output) => {
+                            Ok(mut output) => {
+                                if output.diagnostics.len() > 16 * 1024 {
+                                    truncate(&mut output.diagnostics, 16 * 1024);
+                                    output.truncated = true;
+                                }
                                 let artifact_id = format!("a{}", job.id);
                                 let hash = crate::sha256(&output.elf);
                                 this.artifacts.borrow_mut().insert(
@@ -259,6 +282,7 @@ impl Builds {
                 } else {
                     job.state.set("cancelled");
                 }
+                job.done.notify_waiters();
                 this.out.try_control(
                     json!({"jsonrpc":"2.0","method":"sf.build.finished","params":job.status()}),
                 );
@@ -308,11 +332,7 @@ impl Builds {
             self.jobs.borrow().get(id).cloned().ok_or_else(|| {
                 RpcError::new(-32021, "BUILD_NOT_FOUND", "unknown or expired build")
             })?;
-        job.cancel.cancel();
-        let task = job.task.borrow_mut().take();
-        if let Some(task) = task {
-            let _ = task.await;
-        }
+        job.stop().await;
         Ok(job.status())
     }
     pub fn bytes(&self, id: &str) -> Result<Vec<u8>, RpcError> {
@@ -337,10 +357,7 @@ impl Builds {
             job.cancel.cancel();
         }
         for job in jobs {
-            let task = job.task.borrow_mut().take();
-            if let Some(task) = task {
-                let _ = task.await;
-            }
+            job.stop().await;
         }
     }
 }

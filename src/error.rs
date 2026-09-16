@@ -8,9 +8,17 @@ pub struct RpcError {
 }
 impl RpcError {
     pub fn new(code: i32, kind: &str, message: impl ToString) -> Self {
+        let mut message = message.to_string();
+        if message.len() > 4096 {
+            let mut end = 4096;
+            while !message.is_char_boundary(end) {
+                end -= 1;
+            }
+            message.truncate(end);
+        }
         Self {
             code,
-            message: message.to_string(),
+            message,
             data: serde_json::json!({"kind": kind}),
         }
     }

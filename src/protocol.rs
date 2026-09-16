@@ -137,7 +137,7 @@ impl Service {
             "sf.stats" => {
                 empty(params)?;
                 Ok(
-                    json!({"objects":self.runtime.objects.borrow().len(),"host":self.runtime.host.stats(),"uptime_ms":self.runtime.started.elapsed().as_millis(),"execution_threads":1}),
+                    json!({"objects":self.runtime.objects.borrow().len(),"host":self.runtime.host.stats(),"output":self.runtime.out.stats(),"uptime_ms":self.runtime.started.elapsed().as_millis(),"execution_threads":1}),
                 )
             }
             "sf.shutdown" => {
@@ -260,10 +260,14 @@ pub async fn serve_with_config<R: AsyncRead + Unpin, W: AsyncWrite + Unpin + 'st
     let ids = Rc::new(RefCell::new(HashSet::new()));
     let mut tasks = JoinSet::new();
     let mut input_error = None;
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     loop {
         tokio::select! {
             biased;
             _=service.shutdown.cancelled()=>break,
+            _=terminate.recv()=>break,
+            _=interrupt.recv()=>break,
             _=out.closed.cancelled()=>break,
             result=tasks.join_next(), if !tasks.is_empty()=>{
                 if let Some(Err(e))=result {input_error=Some(anyhow::anyhow!("request task failed: {e}"));break;}
