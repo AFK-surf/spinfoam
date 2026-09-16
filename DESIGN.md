@@ -105,7 +105,7 @@ Bound outbound queues globally and per object. Essential guest calls wait asynch
 
 ## 5. C programming model and helper boundary
 
-Embed and expose `spinfoam.h` via `spinfoam --dump-sdk`, following zeroserve's SDK pattern. Export `SF_MAIN` into the `spinfoam.main` ELF section. Helpers are linked by stable names; the manifest pins SDK ABI and stack profile. Treat arbitrary uploaded objects as untrusted even if they declare the expected ABI.
+Embed and expose `spinfoam.h` via `spinfoam --dump-sdk`, following zeroserve's SDK pattern. Export `SF_MAIN` into the `spinfoam.main` ELF section. Helpers are linked by stable names; the runtime fixes SDK ABI and stack profile. Treat arbitrary uploaded objects as untrusted even if they declare the expected ABI.
 
 Minimal SDK surface:
 
@@ -198,7 +198,7 @@ A useful normal-case goal is 150–400 KiB resident per waiting loop while keepi
 
 Return a build ID immediately. States are `queued/running/succeeded/failed/cancelled`; completion is queryable even if the advisory notification is dropped. A successful build returns an artifact ID, hash, ABI/compiler profile and bounded diagnostics. Artifacts can be loaded directly or exported via `sf.artifact.get` as base64 ELF. Bound artifact retention with a process-wide cache size and expiration; a missing expired artifact is explicit.
 
-For each build, an independently exec'd sandbox launcher creates a fresh Linux user/mount/PID/network/IPC/UTS namespace environment. Use a private mount tree with a minimal read-only, pinned LLVM toolchain and SDK, read-only sources, and a size-limited writable workspace. No host home, secrets, sockets or runtime stdio descriptors are exposed. Clear environment, drop capabilities, set no-new-privileges, and apply a tested seccomp allowlist for the pinned compiler toolchain. Never run complex post-fork setup in the multithreaded Rust process; use the launcher boundary.
+For each build, an independently exec'd sandbox launcher creates a fresh Linux user/mount/PID/network/IPC/UTS namespace environment. Use a private mount tree with a minimal read-only, automatically discovered LLVM toolchain and SDK, read-only sources, and a size-limited writable workspace. No host home, secrets, sockets or runtime stdio descriptors are exposed. Clear environment, drop capabilities, set no-new-privileges, and apply a tested seccomp allowlist for the discovered compiler toolchain. Never run complex post-fork setup in the multithreaded Rust process; use the launcher boundary.
 
 Use per-build cgroup v2 memory, process and CPU controls plus wall deadline, output/file/FD limits and whole-job cleanup. For example, begin qualification with 256 MiB memory, 16 processes, 5 CPU seconds and a 15-second wall deadline. Enforce aggregate workspace bytes, not just per-file size. The [kernel cgroup v2 documentation](https://cdn.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html) describes memory and process controls; deployment must provide the required delegation. Build support fails closed if isolation or required limits cannot be established, advertising `SANDBOX_UNAVAILABLE`; execution of already-built objects can remain available.
 
@@ -213,7 +213,7 @@ llc -march=bpf -mcpu=v3 -bpf-stack-size=4096 --nozero-initialized-in-bss -filety
     /work/main.bc -o /work/main.o
 ```
 
-The `--nozero-initialized-in-bss` option materializes zero globals as loadable PROGBITS; the pinned loader rejects ordinary BSS relocations. Initially one translation unit plus headers; multiple translation units can later use a pinned llvm-link inside the same sandbox. Validate compiler support for this exact profile at startup. SDK integer/layout definitions are self-contained. Include toolchain digest, sources, SDK, target, frame size and fixed options in the cache key. Toolchain/SDK inputs must be immutable; generated debug/path metadata must be normalized if reproducible artifacts are promised.
+The `--nozero-initialized-in-bss` option materializes zero globals as loadable PROGBITS; the pinned loader rejects ordinary BSS relocations. Initially one translation unit plus headers; multiple translation units can later use llvm-link inside the same sandbox. Validate compiler support for this exact profile at startup. SDK integer/layout definitions are self-contained. Include discovered toolchain paths/versions, sources, SDK, target, frame size and fixed options in the cache key. Discover clang, llc, bwrap and their shared libraries from the installed host tools; no user-maintained manifest is required. Restart the process after toolchain upgrades to refresh discovery and its process-local cache; generated debug/path metadata must be normalized if reproducible artifacts are promised.
 
 The compiler and its output are both untrusted. Read output only as a bounded regular file through a safe descriptor, rejecting symlinks/devices and races. Apply protocol size bounds and async-ebpf validation when loading, including uploads that bypass the compiler. Build success is not a promise that every lazy JIT variant will succeed. The sandbox prevents source/compiler exploitation from accessing the runtime; the VM boundary independently contains guest execution.
 
@@ -237,7 +237,7 @@ Deliver in this order:
 1. **Feasibility harness:** 10,000 long-lived async-ebpf invocations on one Tokio execution thread, with timers, cancellation and distinct objects. Measure resident memory, VMAs, JIT work and stack pooling using the existing runtime APIs.
 2. **Protocol and object lifecycle:** version negotiation, object load/start/stop/unload, full-duplex host calls and event delivery, with adversarial framing and backpressure tests.
 3. **SDK and examples:** all four workloads, handle ownership and error handling, bounded JSON and per-object capability checks.
-4. **Compiler service:** pinned toolchain, sandbox probe, build lifecycle, artifact retrieval and isolation tests.
+4. **Compiler service:** automatic tool discovery, sandbox probe, build lifecycle, artifact retrieval and isolation tests.
 5. **Qualification:** memory measurements, soak tests and a reproducible performance report; tune defaults from results and freeze v1 ABI/protocol afterward. Aggregate program-memory enforcement is deferred.
 
 Required evidence for release:

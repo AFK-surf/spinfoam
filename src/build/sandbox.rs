@@ -266,7 +266,7 @@ pub fn launch(path: &Path) -> anyhow::Result<()> {
     if unsafe { libc::fcntl(filter.as_raw_fd(), libc::F_SETFD, 0) } < 0 {
         bail!("fcntl: {}", std::io::Error::last_os_error());
     }
-    let mut cmd = Command::new(&cfg.toolchain.bwrap.path);
+    let mut cmd = Command::new(&cfg.toolchain.bwrap);
     cmd.args([
         "--unshare-all",
         "--unshare-user",
@@ -299,16 +299,16 @@ pub fn launch(path: &Path) -> anyhow::Result<()> {
     let search = std::env::join_paths(search)?;
     cmd.args(["--setenv", "LD_LIBRARY_PATH"]).arg(search);
     for (dest, file) in &cfg.toolchain.libraries {
-        cmd.arg("--ro-bind").arg(&file.path).arg(dest);
+        cmd.arg("--ro-bind").arg(file).arg(dest);
     }
     cmd.arg("--ro-bind")
         .arg(&cfg.runner)
         .arg("/runner")
         .arg("--ro-bind")
-        .arg(&cfg.toolchain.clang.path)
+        .arg(&cfg.toolchain.clang)
         .arg("/toolchain/clang")
         .arg("--ro-bind")
-        .arg(&cfg.toolchain.llc.path)
+        .arg(&cfg.toolchain.llc)
         .arg("/toolchain/llc")
         .arg("--ro-bind")
         .arg(&cfg.sources)

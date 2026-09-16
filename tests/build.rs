@@ -26,23 +26,7 @@ async fn disabled_builds_fail_closed() {
 async fn sandboxed_compiler_end_to_end() {
     let root = std::env::var("SPINFOAM_TEST_CGROUP").expect("set SPINFOAM_TEST_CGROUP");
     let dir = tempfile::tempdir().unwrap();
-    let manifest = dir.path().join("toolchain.json");
-    assert!(
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_spinfoam"))
-            .arg("--write-toolchain-manifest")
-            .arg(&manifest)
-            .status()
-            .await
-            .unwrap()
-            .success()
-    );
-    let mut client = Client::with_args(&[
-        "--toolchain-manifest",
-        manifest.to_str().unwrap(),
-        "--compiler-cgroup",
-        &root,
-    ])
-    .await;
+    let mut client = Client::with_args(&["--compiler-cgroup", &root]).await;
     assert_eq!(
         client.info["compiler"]["available"], true,
         "{}",
@@ -181,24 +165,22 @@ async fn sandboxed_compiler_end_to_end() {
         0,
         "build cgroups leaked"
     );
-    // A changed pin disables builds, rather than silently running a different compiler.
-    let mut manifest_value: Value =
-        serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-    manifest_value["clang"]["sha256"] = json!("bad");
-    std::fs::write(&manifest, serde_json::to_vec(&manifest_value).unwrap()).unwrap();
-    let client = Client::with_args(&[
-        "--toolchain-manifest",
-        manifest.to_str().unwrap(),
-        "--compiler-cgroup",
-        &root,
-    ])
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn missing_compiler_tools_fail_closed() {
+    let client = Client::with_env(
+        &["--compiler-cgroup", "/nonexistent-spinfoam-test-cgroup"],
+        &[("PATH", "")],
+    )
     .await;
     assert_eq!(client.info["compiler"]["available"], false);
     assert!(
         client.info["compiler"]["reason"]
             .as_str()
             .unwrap()
-            .contains("digest changed")
+            .contains("clang is not in PATH")
     );
     client.shutdown().await;
 }

@@ -38,13 +38,9 @@ webhook listener, secrets or distributed coordination are embedded in spinfoam.
 
 ## Enable sandboxed builds
 
-Install Clang/LLVM and Bubblewrap. LLVM 19.1.7 and Bubblewrap 0.12.0 from Debian 13 were
-used for qualification. Generate a manifest pinning the tool files and their
-shared libraries, then keep those files immutable while the runtime is running:
-
-```sh
-target/release/spinfoam --write-toolchain-manifest toolchain.json
-```
+Install Clang/LLVM and Bubblewrap and put `clang`, `llc`, `bwrap` and `ldd`
+in PATH. spinfoam discovers the tools and their shared libraries automatically.
+LLVM 19.1.7 and Bubblewrap 0.12.0 from Debian 13 were used for local qualification.
 
 Run spinfoam inside a **delegated cgroup v2 subtree** with the `cpu`, `memory` and
 `pids` controllers enabled for children. Its runtime process must be in a leaf
@@ -55,24 +51,24 @@ provide delegation; your service launcher arranges the runtime leaf and enables
 the controllers. spinfoam never escalates privileges or changes host delegation.
 The optional [run-delegated.sh](scripts/run-delegated.sh) launcher creates the runtime
 leaf and enables child controllers within an already delegated, exclusive subtree;
-invoke it from inside that subtree with the binary and `--toolchain-manifest` arguments.
+invoke it from inside that subtree with the binary.
 
-Pass the delegated subtree and manifest when launching the child:
+Enable compilation by passing the delegated subtree:
 
 ```sh
 target/release/spinfoam \
-  --toolchain-manifest toolchain.json \
   --compiler-cgroup /sys/fs/cgroup/your-delegated-subtree
 ```
 
 The startup probe executes a real sandboxed build. `sf.initialize` reports whether
 it succeeded and why it failed otherwise. Builds fail closed if namespaces,
-seccomp, pinned files or cgroup controls are unavailable; existing ELF execution
-remains usable. There is no insecure bypass flag.
+seccomp, compiler tools or cgroup controls are unavailable; existing ELF execution
+remains usable. There is no insecure bypass flag. Restart spinfoam after upgrading the compiler
+tools or libraries; discovery and the build cache are scoped to one process.
 
 Each build uses separate user/mount/PID/network/IPC/UTS/cgroup namespaces, a
 syscall allowlist, no-new-privileges, dropped capabilities, read-only source/SDK/
-toolchain mounts and a 16 MiB writable tmpfs. Only the pinned libraries and tools
+toolchain mounts and a 16 MiB writable tmpfs. Only the discovered libraries and tools
 are mounted, not the host filesystem. Limits are 256 MiB memory, no swap, 16 tasks,
 one CPU of bandwidth, five CPU seconds and a 15-second wall deadline. Cancellation
 kills the entire build cgroup and reaps its processes. Builds return retrievable
@@ -97,7 +93,7 @@ SPINFOAM_TEST_CGROUP=/sys/fs/cgroup/your-delegated-subtree \
 ```
 
 It tests real compilation/artifact execution, host-file isolation, source-path
-validation, changed toolchain pins, compiler resource exhaustion, cancellation,
+validation, missing compiler tools, compiler resource exhaustion, cancellation,
 cleanup, caching and all four examples.
 
 ```sh

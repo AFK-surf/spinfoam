@@ -28,7 +28,6 @@ use toolchain::Toolchain;
 
 #[derive(Clone)]
 pub struct Config {
-    pub manifest: PathBuf,
     pub cgroup: PathBuf,
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -131,19 +130,9 @@ impl Builds {
             if !cfg!(target_os = "linux") {
                 anyhow::bail!("sandboxed compilation currently requires Linux");
             }
-            let config = config.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "configure --toolchain-manifest and --compiler-cgroup to enable builds"
-                )
-            })?;
-            let manifest = config.manifest.clone();
-            let (toolchain, runner_hash) = tokio::task::spawn_blocking(move || {
-                Ok::<_, anyhow::Error>((
-                    Toolchain::read(&manifest)?,
-                    crate::sha256(&std::fs::read(std::env::current_exe()?)?),
-                ))
-            })
-            .await??;
+            let config = config
+                .ok_or_else(|| anyhow::anyhow!("configure --compiler-cgroup to enable builds"))?;
+            let toolchain = tokio::task::spawn_blocking(Toolchain::discover).await??;
             let root = std::fs::canonicalize(config.cgroup)?;
             // A real compile probes the full sandbox, toolchain ABI and required controls.
             let files = BTreeMap::from([(
@@ -162,7 +151,7 @@ impl Builds {
                 format!(
                     "{}:{}:{}:{}",
                     toolchain.digest(),
-                    runner_hash,
+                    crate::ASYNC_EBPF_REVISION,
                     crate::SDK,
                     "bpfel-v3-frame4096-O2-nozero-bss-v1"
                 )

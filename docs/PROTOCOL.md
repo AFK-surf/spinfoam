@@ -148,8 +148,9 @@ SDK version and toolchain fingerprint. A successful build can be loaded directly
 by artifact ID. Artifacts expire after 30 minutes and are bounded by 128 entries
 and 8 MiB. Build history is bounded to approximately 128 records; active jobs are
 never evicted. One build runs at a time with at most 16 active/queued jobs.
-Cache keys include all sources, SDK, fixed profile, runtime binary and pinned
-toolchain. Availability of a cache entry is not a durability guarantee.
+Cache keys include all sources, SDK, fixed profile, async-ebpf revision and
+automatically discovered toolchain paths/versions. The cache is process-local;
+restart spinfoam after compiler or library upgrades. Availability of a cache entry is not a durability guarantee.
 
 ## Errors and transport bounds
 

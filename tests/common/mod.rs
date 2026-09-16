@@ -20,8 +20,12 @@ impl Client {
         Self::with_args(&[]).await
     }
     pub async fn with_args(args: &[&str]) -> Self {
+        Self::with_env(args, &[]).await
+    }
+    pub async fn with_env(args: &[&str], env: &[(&str, &str)]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_spinfoam"))
             .args(args)
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -37,7 +41,7 @@ impl Client {
             output,
             next: 0,
             saved: VecDeque::new(),
-            // A configured compiler hashes large LLVM libraries and runs a real probe.
+            // A configured compiler discovers its tools and runs a real sandbox probe.
             read_timeout: Duration::from_secs(90),
         };
         let init = client

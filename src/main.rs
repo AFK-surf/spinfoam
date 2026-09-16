@@ -6,14 +6,8 @@ struct Args {
     /// Print the self-contained C SDK and exit.
     #[arg(long)]
     dump_sdk: bool,
-    /// Discover local clang/llc/bwrap and write a manifest pinning their files and libraries.
+    /// Enable builds using tools from PATH and this delegated cgroup v2 subtree.
     #[arg(long)]
-    write_toolchain_manifest: Option<PathBuf>,
-    /// Pinned compiler toolchain manifest. Both compiler options are required to enable builds.
-    #[arg(long, requires = "compiler_cgroup")]
-    toolchain_manifest: Option<PathBuf>,
-    /// Empty, delegated cgroup v2 subtree with cpu, memory and pids controllers enabled.
-    #[arg(long, requires = "toolchain_manifest")]
     compiler_cgroup: Option<PathBuf>,
     #[arg(long, hide = true)]
     sandbox_launch: Option<PathBuf>,
@@ -32,11 +26,6 @@ fn main() -> anyhow::Result<()> {
         print!("{}", spinfoam::SDK);
         return Ok(());
     }
-    if let Some(path) = args.write_toolchain_manifest {
-        let manifest = spinfoam::build::toolchain::Toolchain::discover()?;
-        std::fs::write(path, serde_json::to_vec_pretty(&manifest)?)?;
-        return Ok(());
-    }
     if !cfg!(all(
         any(target_os = "linux", target_os = "macos"),
         any(target_arch = "x86_64", target_arch = "aarch64")
@@ -48,9 +37,8 @@ fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let config = args
-        .toolchain_manifest
-        .zip(args.compiler_cgroup)
-        .map(|(manifest, cgroup)| spinfoam::build::Config { manifest, cgroup });
+        .compiler_cgroup
+        .map(|cgroup| spinfoam::build::Config { cgroup });
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .max_blocking_threads(2)
