@@ -13,6 +13,7 @@ pub struct Client {
     output: BufReader<ChildStdout>,
     next: u64,
     saved: VecDeque<Value>,
+    read_timeout: Duration,
 }
 impl Client {
     pub async fn new() -> Self {
@@ -36,12 +37,15 @@ impl Client {
             output,
             next: 0,
             saved: VecDeque::new(),
+            // A configured compiler hashes large LLVM libraries and runs a real probe.
+            read_timeout: Duration::from_secs(90),
         };
         let init = client
             .call("sf.initialize", json!({"protocol_version":1}))
             .await;
         assert_eq!(init["protocol_version"], 1);
         client.info = init;
+        client.read_timeout = Duration::from_secs(20);
         client
     }
     pub async fn close_input(&mut self) {
@@ -61,7 +65,7 @@ impl Client {
     }
     pub async fn read(&mut self) -> Value {
         let mut line = String::new();
-        let n = tokio::time::timeout(Duration::from_secs(20), self.output.read_line(&mut line))
+        let n = tokio::time::timeout(self.read_timeout, self.output.read_line(&mut line))
             .await
             .expect("protocol timeout")
             .unwrap();

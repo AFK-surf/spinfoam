@@ -33,7 +33,7 @@ jobs:
           echo '+cpu +memory +pids' | sudo tee /sys/fs/cgroup/spinfoam-ci/cgroup.subtree_control
           sudo chown "$(id -u):$(id -g)" /sys/fs/cgroup/spinfoam-ci /sys/fs/cgroup/spinfoam-ci/cgroup.procs /sys/fs/cgroup/spinfoam-ci/cgroup.threads /sys/fs/cgroup/spinfoam-ci/cgroup.subtree_control
           sudo mkdir /sys/fs/cgroup/spinfoam-ci/runtime
-          sudo -E sh -c 'echo $$ > /sys/fs/cgroup/spinfoam-ci/runtime/cgroup.procs; exec setpriv --reuid="$1" --regid="$2" --init-groups env "PATH=$3" SPINFOAM_TEST_CGROUP=/sys/fs/cgroup/spinfoam-ci "$4" test --locked --test build -- --include-ignored --nocapture' sh "$(id -u)" "$(id -g)" "$PATH" "$(command -v cargo)"
+          sudo -E sh -c 'echo $$ > /sys/fs/cgroup/spinfoam-ci/runtime/cgroup.procs; exec setpriv --reuid="$1" --regid="$2" --init-groups env "PATH=$3" SPINFOAM_TEST_CGROUP=/sys/fs/cgroup/spinfoam-ci "$4" test --release --locked --test build -- --include-ignored --nocapture' sh "$(id -u)" "$(id -g)" "$PATH" "$(command -v cargo)"
       - name: Concurrency smoke test
         run: python3 bench/concurrency.py --count 1000 --soak-seconds 1
       - uses: actions/upload-artifact@v4
