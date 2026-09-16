@@ -1,6 +1,6 @@
 # spinfoam design proposal
 
-Status: proposed; based on source inspection on 2026-09-16. Revised to use independent objects and a non-enforced memory design target. No runtime has been implemented or benchmarked yet.
+Status: implemented initial version; based on source inspection on 2026-09-16. The object runtime, SDK, protocol and sandboxed compiler are implemented and tested. See [README.md](README.md) and [the protocol reference](docs/PROTOCOL.md) for the implemented interface; performance measurements are recorded separately. The memory budget below remains a design estimate, not an enforced limit.
 
 Build a Linux x86_64 Rust executable that runs independent, long-lived userspace eBPF loops on a Tokio current-thread runtime. The embedder controls it through bidirectional JSON-RPC over stdio. Each loop can await timers, incoming events, and capability-checked RPCs to the embedder while preserving its C stack and mutable globals. Compilation is a separate, sandboxed service in the same protocol.
 
@@ -99,7 +99,7 @@ The host must respond using the same ID; no separate `rpc.resolve` method is nee
 
 Guest notification of an important condition should use an acknowledged `host.call` capability such as `agent.notify`, with an application deduplication key. Success means the embedder acknowledged acceptance. Protocol notifications and pipe writes alone provide no durable delivery guarantee. An external side effect may already have occurred when a call times out; spinfoam does not automatically retry it.
 
-`sf.event.deliver` success means admitted to volatile memory, not processed or durable. FIFO order is the admission order for one object; no cross-object ordering. Bound mailboxes by bytes and count, initially 32 KiB and 32 entries, and return `MAILBOX_FULL` on overflow. A bounded recent-ID window supports retry deduplication but makes no unlimited exactly-once promise. Opt-in keyed coalescing is appropriate for device state, never implicit for arbitrary webhooks. A workload requiring processed acknowledgements sends an explicit `host.call` after processing; the embedder maintains the durable event ledger.
+`sf.event.deliver` success means admitted to volatile memory, not processed or durable. FIFO order is the admission order for one object; no cross-object ordering. Bound mailboxes by bytes and count, initially 32 KiB and 32 entries, and return `MAILBOX_FULL` on overflow. A bounded recent-ID window supports retry deduplication but makes no unlimited exactly-once promise. Device-state coalescing can happen in the embedder before delivery; the initial runtime preserves FIFO events without coalescing. A workload requiring processed acknowledgements sends an explicit `host.call` after processing; the embedder maintains the durable event ledger.
 
 Bound outbound queues globally and per object. Essential guest calls wait asynchronously for capacity with a deadline; logs are rate-limited and may be dropped with a counter. The writer drains object queues in round-robin order, with reserved control capacity. If the peer stops draining stdout, outbound buffering stays bounded and calls time out. One stdio stream necessarily has head-of-line blocking; bounded frame sizes limit its unit of blockage but cannot remove it.
 
@@ -148,7 +148,7 @@ SF_MAIN int monitor(void) {
 }
 ```
 
-This is proposed SDK syntax, not compilable against an existing header. The SDK examples must explicitly release handles: a lifetime-long invocation cannot rely on request teardown as zeroserve does.
+This sketch illustrates the SDK; complete, tested programs live in [examples/](examples). The SDK examples must explicitly release handles: a lifetime-long invocation cannot rely on request teardown as zeroserve does.
 
 ## 6. Scheduling, backpressure and cancellation
 
@@ -209,11 +209,11 @@ Pin a tested clang/llc pair and invoke fixed argument arrays, following zeroserv
 ```text
 clang -O2 -Wall -target bpfel -ffreestanding -fno-builtin -nostdinc \
       -I/sdk -I/src -emit-llvm -c /src/main.c -o /work/main.bc
-llc -march=bpf -mcpu=v3 -bpf-stack-size=4096 -filetype=obj \
+llc -march=bpf -mcpu=v3 -bpf-stack-size=4096 --nozero-initialized-in-bss -filetype=obj \
     /work/main.bc -o /work/main.o
 ```
 
-Initially one translation unit plus headers; multiple translation units can later use a pinned llvm-link inside the same sandbox. Validate compiler support for this exact profile at startup. SDK integer/layout definitions are self-contained. Include toolchain digest, sources, SDK, target, frame size and fixed options in the cache key. Toolchain/SDK inputs must be immutable; generated debug/path metadata must be normalized if reproducible artifacts are promised.
+The `--nozero-initialized-in-bss` option materializes zero globals as loadable PROGBITS; the pinned loader rejects ordinary BSS relocations. Initially one translation unit plus headers; multiple translation units can later use a pinned llvm-link inside the same sandbox. Validate compiler support for this exact profile at startup. SDK integer/layout definitions are self-contained. Include toolchain digest, sources, SDK, target, frame size and fixed options in the cache key. Toolchain/SDK inputs must be immutable; generated debug/path metadata must be normalized if reproducible artifacts are promised.
 
 The compiler and its output are both untrusted. Read output only as a bounded regular file through a safe descriptor, rejecting symlinks/devices and races. Apply protocol size bounds and async-ebpf validation when loading, including uploads that bypass the compiler. Build success is not a promise that every lazy JIT variant will succeed. The sandbox prevents source/compiler exploitation from accessing the runtime; the VM boundary independently contains guest execution.
 
@@ -222,7 +222,7 @@ The compiler and its output are both untrusted. Read output only as a bounded re
 | Workload | Loop behavior | Embedder responsibility |
 | --- | --- | --- |
 | GitHub Actions run | Call a scoped read capability; inspect status; sleep with backoff/jitter; send acknowledged condition notification with a deduplication key. | GitHub auth, HTTP/rate-limit handling, durable notification acceptance. |
-| Home Assistant device | Await coalesced device-state events and evaluate transitions; optional periodic scoped read for reconciliation. | Maintain the external subscription, reconnect, filter device access, forward state. |
+| Home Assistant device | Await forwarded device-state events and evaluate transitions; optional periodic scoped read for reconciliation. | Maintain the external subscription, reconnect, filter device access, forward state. |
 | Keyword on web page | Fetch bounded content chunks via capability; scan in C while retaining overlap of keyword length minus one; notify on desired transition. | Fetch/redirect/size policy and optional validators such as ETag. Define byte/Unicode matching semantics in the workload. |
 | Arbitrary webhook | Await event, validate fields, perform condition/action RPC, optionally acknowledge processing by event ID. | HTTP ingress, webhook authentication, durable retention/retry and response timing. Binary bodies use bounded encoded/chunked payloads. |
 

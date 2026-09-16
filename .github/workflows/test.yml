@@ -1,0 +1,35 @@
+name: test
+on: [push, pull_request]
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: sudo apt-get update && sudo apt-get install -y clang-19 llvm-19 bubblewrap
+      - run: echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Enable namespace tests on the disposable runner
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Test sandboxed builds in a delegated cgroup
+        run: |
+          sudo mkdir /sys/fs/cgroup/spinfoam-ci
+          echo '+cpu +memory +pids' | sudo tee /sys/fs/cgroup/spinfoam-ci/cgroup.subtree_control
+          sudo chown "$(id -u):$(id -g)" /sys/fs/cgroup/spinfoam-ci /sys/fs/cgroup/spinfoam-ci/cgroup.procs /sys/fs/cgroup/spinfoam-ci/cgroup.threads /sys/fs/cgroup/spinfoam-ci/cgroup.subtree_control
+          sudo mkdir /sys/fs/cgroup/spinfoam-ci/runtime
+          sudo -E sh -c 'echo $$ > /sys/fs/cgroup/spinfoam-ci/runtime/cgroup.procs; exec setpriv --reuid="$1" --regid="$2" --init-groups env "PATH=$3" SPINFOAM_TEST_CGROUP=/sys/fs/cgroup/spinfoam-ci "$4" test --locked --test build -- --include-ignored --nocapture' sh "$(id -u)" "$(id -g)" "$PATH" "$(command -v cargo)"
+      - name: Concurrency smoke test
+        run: python3 bench/concurrency.py --count 1000 --soak-seconds 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: concurrency-results
+          path: bench/results/*.json

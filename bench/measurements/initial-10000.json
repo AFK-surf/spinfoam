@@ -1,0 +1,79 @@
+{
+  "count": 10000,
+  "platform": "Linux-6.12.101+deb13-cloud-amd64-x86_64-with-glibc2.41",
+  "cpu": "",
+  "cpu_count": 8,
+  "git_revision": "09ab010b992852556678f6c15d4d82946ba4f8de",
+  "vm_max_map_count": 1048576,
+  "runtime": {
+    "async_ebpf_revision": "7e8a7cbce195d68a1d579608b7a28b55f6fce7fd",
+    "compiler": {
+      "available": false,
+      "clang_version": null,
+      "fingerprint": "",
+      "llc_version": null,
+      "reason": "configure --toolchain-manifest and --compiler-cgroup to enable builds"
+    },
+    "limits": {
+      "frame_bytes": 262144,
+      "handles": 128,
+      "mailbox_bytes": 32768,
+      "mailbox_entries": 32,
+      "value_bytes": 16384
+    },
+    "memory_target_bytes": 1000000,
+    "memory_target_enforced": false,
+    "protocol_version": 1,
+    "sdk_version": 1,
+    "session_id": "d180d27b966bc641f8bc0bffa0aeaeaa",
+    "target": "linux-x86_64"
+  },
+  "baseline": {
+    "rss": 4898816,
+    "pss": 3330048,
+    "vmas": 37,
+    "VmSize": 75718656,
+    "VmPTE": 65536,
+    "threads": 2
+  },
+  "active": {
+    "rss": 631439360,
+    "pss": 629870592,
+    "vmas": 240090,
+    "VmSize": 41649643520,
+    "VmPTE": 77914112,
+    "threads": 4
+  },
+  "after_events": {
+    "rss": 637341696,
+    "pss": 635772928,
+    "vmas": 240090,
+    "VmSize": 41655590912,
+    "VmPTE": 77926400,
+    "threads": 4
+  },
+  "after_soak": {
+    "rss": 637407232,
+    "pss": 635782144,
+    "vmas": 240086,
+    "VmSize": 41655566336,
+    "VmPTE": 77926400,
+    "threads": 2
+  },
+  "after_unload": {
+    "rss": 511549440,
+    "pss": 509924352,
+    "vmas": 182021,
+    "VmSize": 5279576064,
+    "VmPTE": 43466752,
+    "threads": 2
+  },
+  "load_seconds": 2.549465118907392,
+  "event_seconds": 0.6086673650424927,
+  "event_acknowledgements": 10000,
+  "soak_seconds": 60,
+  "control_p50_ms": 0.10580907110124826,
+  "control_p99_ms": 0.1341160386800766,
+  "incremental_active_pss_per_program": 62654.0544,
+  "incremental_mixed_pss_per_program": 63244.288
+}

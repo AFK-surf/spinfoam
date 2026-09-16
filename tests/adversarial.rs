@@ -114,3 +114,71 @@ async fn simultaneous_stop_requests_complete() {
     }
     c.shutdown().await;
 }
+
+#[tokio::test]
+async fn blocked_stdout_has_bounded_shutdown_and_does_not_deadlock_reader() {
+    use std::process::Stdio;
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_spinfoam"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut frames = String::from(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"init\",\"method\":\"sf.initialize\",\"params\":{\"protocol_version\":1}}\n",
+    );
+    for n in 0..2000 {
+        frames.push_str(&format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":\"{n}\",\"method\":\"sf.stats\"}}\n"
+        ));
+    }
+    let write = async {
+        let _ = input.write_all(frames.as_bytes()).await;
+    };
+    let (_, status) = tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        tokio::join!(write, child.wait())
+    })
+    .await
+    .expect("blocked stdout prevented shutdown");
+    assert!(status.unwrap().success());
+}
+#[tokio::test]
+async fn recursive_local_calls_stop_at_guest_stack_boundary() {
+    let mut c = Client::new().await;
+    let id=c.load("__attribute__((noinline)) sf_i64 recurse(sf_i64 n){volatile sf_i64 keep=n;if(n)return recurse(n-1)+keep;return keep;} SF_MAIN sf_i64 main(void){return recurse(100);}",json!({}),json!([])).await;
+    c.start(&id).await;
+    let status = c.terminal(&id).await;
+    assert_eq!(status["state"], "failed", "{status}");
+    assert!(
+        status["outcome"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("stack")
+    );
+    c.shutdown().await;
+}
+#[tokio::test]
+async fn sigterm_cleans_up_live_objects() {
+    let mut c = Client::new().await;
+    let id = c
+        .load(
+            "SF_MAIN sf_i64 main(void){sf_sleep_ms(60000);return 0;}",
+            json!({}),
+            json!([]),
+        )
+        .await;
+    c.start(&id).await;
+    assert_eq!(
+        unsafe { libc::kill(c.child.id().unwrap() as i32, libc::SIGTERM) },
+        0
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(3), c.child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+}

@@ -1,0 +1,81 @@
+{
+  "count": 20000,
+  "platform": "Linux-6.12.101+deb13-cloud-amd64-x86_64-with-glibc2.41",
+  "cpu": "",
+  "cpu_count": 8,
+  "binary_sha256": "c4b3ee4577bc55b3f44fab3eb333dedac00afff1a01b8b53adb03c9680e32d68",
+  "source_dirty": true,
+  "git_revision": "2313db5440addb32719d43a116bc50530afeb516",
+  "vm_max_map_count": 1048576,
+  "runtime": {
+    "async_ebpf_revision": "7e8a7cbce195d68a1d579608b7a28b55f6fce7fd",
+    "compiler": {
+      "available": false,
+      "clang_version": null,
+      "fingerprint": "",
+      "llc_version": null,
+      "reason": "configure --toolchain-manifest and --compiler-cgroup to enable builds"
+    },
+    "limits": {
+      "frame_bytes": 262144,
+      "handles": 128,
+      "mailbox_bytes": 32768,
+      "mailbox_entries": 32,
+      "value_bytes": 16384
+    },
+    "memory_target_bytes": 1000000,
+    "memory_target_enforced": false,
+    "protocol_version": 1,
+    "sdk_version": 1,
+    "session_id": "3d57b730e9b7e5d71531128e31962ad6",
+    "target": "linux-x86_64"
+  },
+  "baseline": {
+    "rss": 4853760,
+    "pss": 3311616,
+    "vmas": 37,
+    "VmSize": 75726848,
+    "VmPTE": 53248,
+    "threads": 2
+  },
+  "active": {
+    "rss": 1251409920,
+    "pss": 1249867776,
+    "vmas": 480110,
+    "VmSize": 83028570112,
+    "VmPTE": 154955776,
+    "threads": 4
+  },
+  "after_events": {
+    "rss": 1262882816,
+    "pss": 1261340672,
+    "vmas": 480110,
+    "VmSize": 83040059392,
+    "VmPTE": 154980352,
+    "threads": 4
+  },
+  "after_soak": {
+    "rss": 1262948352,
+    "pss": 1261427712,
+    "vmas": 480106,
+    "VmSize": 83040034816,
+    "VmPTE": 154980352,
+    "threads": 2
+  },
+  "after_unload": {
+    "rss": 1016295424,
+    "pss": 1014774784,
+    "vmas": 363738,
+    "VmSize": 10343817216,
+    "VmPTE": 89137152,
+    "threads": 2
+  },
+  "load_seconds": 5.477286086883396,
+  "event_seconds": 1.031168911140412,
+  "event_acknowledgements": 20000,
+  "soak_seconds": 120,
+  "control_p50_ms": 0.10163302067667246,
+  "control_p99_ms": 0.16690907068550587,
+  "incremental_active_pss_per_program": 62327.808,
+  "incremental_mixed_pss_per_program": 62901.4528
+}
