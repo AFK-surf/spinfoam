@@ -36,7 +36,7 @@ webhook listener, secrets or distributed coordination are embedded in spinfoam.
 
 ## Enable sandboxed builds
 
-Install Clang/LLVM and Bubblewrap. LLVM 19.1.7 and Bubblewrap from Debian 13 were
+Install Clang/LLVM and Bubblewrap. LLVM 19.1.7 and Bubblewrap 0.12.0 from Debian 13 were
 used for qualification. Generate a manifest pinning the tool files and their
 shared libraries, then keep those files immutable while the runtime is running:
 
@@ -51,6 +51,9 @@ be enabled. The runtime user needs permission to create child cgroups and move
 its own processes within the subtree. A systemd service with `Delegate=yes` can
 provide delegation; your service launcher arranges the runtime leaf and enables
 the controllers. spinfoam never escalates privileges or changes host delegation.
+The optional [run-delegated.sh](scripts/run-delegated.sh) launcher creates the runtime
+leaf and enables child controllers within an already delegated, exclusive subtree;
+invoke it from inside that subtree with the binary and `--toolchain-manifest` arguments.
 
 Pass the delegated subtree and manifest when launching the child:
 

@@ -9,17 +9,17 @@ Host: Linux 6.12.101 Debian 13, x86_64, eight available CPUs, approximately 20 G
 RAM, `vm.max_map_count=1048576`. async-ebpf revision:
 `7e8a7cbce195d68a1d579608b7a28b55f6fce7fd`.
 
-| Measurement | 10,000 objects (initial run) | 20,000 objects |
+| Measurement | 10,000 objects | 20,000 objects |
 | --- | ---: | ---: |
-| Incremental active PSS / object | 62,654 bytes | 62,328 bytes |
-| Incremental PSS / object after event/RPC | 63,244 bytes | 62,901 bytes |
+| Incremental active PSS / object | 62,561 bytes | 62,328 bytes |
+| Incremental PSS / object after event/RPC | 63,136 bytes | 62,901 bytes |
 | Successful event/RPC acknowledgements | 10,000 | 20,000 |
-| Load + start time | 2.55 s | 5.48 s |
-| Event delivery + RPC acknowledgement time | 0.61 s | 1.03 s |
-| p99 idle control-request round trip | 0.134 ms | 0.167 ms |
-| Active VMAs | 240,090 | 480,110 |
-| Active virtual address space | 41.65 GB | 83.03 GB |
-| Active page-table memory | 77.9 MB | 155.0 MB |
+| Load + start time | 2.77 s | 5.48 s |
+| Event delivery + RPC acknowledgement time | 0.56 s | 1.03 s |
+| p99 idle control-request round trip | 0.169 ms | 0.167 ms |
+| Active VMAs | 240,073 | 480,110 |
+| Active virtual address space | 41.67 GB | 83.03 GB |
+| Active page-table memory | 78.0 MB | 155.0 MB |
 | Process threads during loading/JIT | 4 | 4 |
 | Process threads after workers idle out | 2 | 2 |
 | Wait period after event workload | 60 s | 120 s |
@@ -46,8 +46,9 @@ The 20,000-object measurement used the implementation at `2313db5`; documentatio
 and additional tests were being edited, so the raw result marks the checkout
 dirty. Its release executable SHA-256 is
 `c4b3ee4577bc55b3f44fab3eb333dedac00afff1a01b8b53adb03c9680e32d68`.
-The initial 10,000 run preceded the final transport-hardening changes and did not
-record a binary digest. Raw measurements are in [measurements/](measurements).
+The final 10,000-object run used the same executable with a clean checkout at
+`4e2c202`. Raw measurements, including an earlier 10,000-object run for reference,
+are in [measurements/](measurements).
 
 These short runs establish the requested population capacity for the measured
 workload. They do not constitute the proposed 24-hour churn qualification, a

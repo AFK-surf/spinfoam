@@ -1,0 +1,81 @@
+{
+  "count": 10000,
+  "platform": "Linux-6.12.101+deb13-cloud-amd64-x86_64-with-glibc2.41",
+  "cpu": "",
+  "cpu_count": 8,
+  "binary_sha256": "c4b3ee4577bc55b3f44fab3eb333dedac00afff1a01b8b53adb03c9680e32d68",
+  "source_dirty": false,
+  "git_revision": "4e2c202d2aec3764140060f2aa455dbe41f70c3b",
+  "vm_max_map_count": 1048576,
+  "runtime": {
+    "async_ebpf_revision": "7e8a7cbce195d68a1d579608b7a28b55f6fce7fd",
+    "compiler": {
+      "available": false,
+      "clang_version": null,
+      "fingerprint": "",
+      "llc_version": null,
+      "reason": "configure --toolchain-manifest and --compiler-cgroup to enable builds"
+    },
+    "limits": {
+      "frame_bytes": 262144,
+      "handles": 128,
+      "mailbox_bytes": 32768,
+      "mailbox_entries": 32,
+      "value_bytes": 16384
+    },
+    "memory_target_bytes": 1000000,
+    "memory_target_enforced": false,
+    "protocol_version": 1,
+    "sdk_version": 1,
+    "session_id": "7e616307a6b6c0e6dbb8add471ea374b",
+    "target": "linux-x86_64"
+  },
+  "baseline": {
+    "rss": 4812800,
+    "pss": 3222528,
+    "vmas": 37,
+    "VmSize": 75726848,
+    "VmPTE": 57344,
+    "threads": 2
+  },
+  "active": {
+    "rss": 630390784,
+    "pss": 628828160,
+    "vmas": 240073,
+    "VmSize": 41669615616,
+    "VmPTE": 78032896,
+    "threads": 4
+  },
+  "after_events": {
+    "rss": 636145664,
+    "pss": 634583040,
+    "vmas": 240073,
+    "VmSize": 41675427840,
+    "VmPTE": 78045184,
+    "threads": 4
+  },
+  "after_soak": {
+    "rss": 636276736,
+    "pss": 634611712,
+    "vmas": 240069,
+    "VmSize": 41675403264,
+    "VmPTE": 78045184,
+    "threads": 2
+  },
+  "after_unload": {
+    "rss": 511389696,
+    "pss": 509724672,
+    "vmas": 182212,
+    "VmSize": 5279502336,
+    "VmPTE": 45428736,
+    "threads": 2
+  },
+  "load_seconds": 2.7733876081183553,
+  "event_seconds": 0.5556325388606638,
+  "event_acknowledgements": 10000,
+  "soak_seconds": 60,
+  "control_p50_ms": 0.12169801630079746,
+  "control_p99_ms": 0.16916007734835148,
+  "incremental_active_pss_per_program": 62560.5632,
+  "incremental_mixed_pss_per_program": 63136.0512
+}
