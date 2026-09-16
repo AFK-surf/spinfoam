@@ -1,0 +1,26 @@
+[package]
+name = "spinfoam"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Independent, asynchronous userspace eBPF background loops"
+
+[dependencies]
+async-ebpf = { git = "https://github.com/losfair/async-ebpf.git", rev = "7e8a7cbce195d68a1d579608b7a28b55f6fce7fd" }
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+libc = "0.2"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "io-util", "net", "process", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+debug = 1
