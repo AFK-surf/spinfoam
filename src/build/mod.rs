@@ -128,6 +128,9 @@ pub struct Builds {
 impl Builds {
     pub async fn new(config: Option<Config>, out: Outbox) -> Rc<Self> {
         let setup = async {
+            if !cfg!(target_os = "linux") {
+                anyhow::bail!("sandboxed compilation currently requires Linux");
+            }
             let config = config.ok_or_else(|| {
                 anyhow::anyhow!(
                     "configure --toolchain-manifest and --compiler-cgroup to enable builds"

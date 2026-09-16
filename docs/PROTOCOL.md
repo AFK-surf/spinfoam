@@ -1,6 +1,6 @@
 # Protocol v1
 
-spinfoam is a Linux x86_64 child process. Its stdin and stdout must be pipes or Unix
+spinfoam is a Linux/macOS child process for x86_64 and arm64. Its stdin and stdout must be pipes or Unix
 sockets. Write one JSON-RPC 2.0 object per UTF-8 line; read stdout continuously,
 including while waiting for a response. stderr is diagnostic output. Start by
 negotiating version 1. JSON-RPC IDs are strings up to 128 bytes and must be unique
