@@ -388,7 +388,15 @@ mod tests {
                         .to_string()
                         .contains("physical footprint")
                 ),
-                "cpu" => assert!(result.unwrap_err().to_string().contains("SIGKILL")),
+                "cpu" => {
+                    let error = result.unwrap_err().to_string();
+                    // Darwin can terminate at the soft limit with SIGXCPU before
+                    // reaching hard-limit SIGKILL; both enforce the CPU budget.
+                    assert!(
+                        error.contains("SIGXCPU") || error.contains("SIGKILL"),
+                        "{error}"
+                    );
+                }
                 "wall" => assert!(result.unwrap_err().to_string().contains("wall deadline")),
                 _ => unreachable!(),
             }
