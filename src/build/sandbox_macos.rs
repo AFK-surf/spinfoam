@@ -221,6 +221,8 @@ pub async fn run(
             "-target",
             "bpfel",
             "-ffreestanding",
+            "-fintegrated-cc1",
+            "-fno-temp-file",
             "-fno-builtin",
             "-fno-zero-initialized-in-bss",
             "-nostdinc",
