@@ -114,9 +114,10 @@ important outcomes. A pipe write or a JSON-RPC notification is not durable deliv
 
 ## Builds and artifacts
 
-The runtime advertises `compiler.available: false` if no sandbox is configured or
-its startup probe fails. It continues to accept existing ELF objects. There is no
-unsandboxed compiler fallback.
+Pass `--enable-builds` to enable the embedded TinyCC-in-eBPF compiler. Without it,
+`compiler.available` is false and submissions return `SANDBOX_UNAVAILABLE`.
+`sf.initialize` also reports `name`, pinned upstream `revision`, `target: "bpfel"`,
+`embedded: true`, and a content-derived `fingerprint`. No host tools are required.
 
 ```json
 {"jsonrpc":"2.0","id":"build","method":"sf.build.submit","params":{"sdk_version":1,"entry":"main.c","files":{"main.c":"#include \"spinfoam.h\"\nSF_MAIN sf_i64 main(void) { sf_sleep_ms(1000); return 42; }"}}}
@@ -132,16 +133,16 @@ plus headers, little-endian BPF v3, and 4096-byte frames.
 
 Submission returns a `build_id` and status. `sf.build.status` and `sf.build.cancel`
 take `{ "build_id": "b1" }`. States: `queued`, `running`, `succeeded`, `failed`,
-`cancelled`. Cancellation terminates the platform sandbox and waits for the launcher/compiler to exit. `sf.build.finished` is an
+`cancelled`. Cancellation drops the compiler guest invocation and releases its state. `sf.build.finished` is an
 advisory notification; query status for the authoritative result.
 
 Successful `result` fields include `artifact_id`, `sha256`, `sdk_version`, `cached`,
 `diagnostics` and `diagnostics_truncated`. Failed builds include `kind: "BUILD_FAILED"`
-and an error. Capture drains compiler stderr regardless of truncation; raw capture
-is limited to 64 KiB and returned text to 16 KiB so JSON escaping fits a frame.
-ELF output is limited to 64 KiB. The compiler pipeline materializes zero globals as
-PROGBITS with `llc --nozero-initialized-in-bss`, because this pinned VM does not
-accept ordinary BSS relocations.
+and an error. Diagnostic helpers bound returned text to 16 KiB. ELF output is limited
+to 64 KiB. TinyCC materializes zero globals as PROGBITS and disables common symbols
+because the pinned VM does not accept ordinary BSS relocations. The freestanding
+compiler supports integer C; floating point and signed division/modulo are unsupported. Each build uses a fresh
+8 MiB compiler arena/stack and has a 15-second wall deadline, including load/JIT.
 
 `sf.artifact.get` takes `{ "artifact_id": "ab1" }`, returning base64 `elf`, its hash,
 SDK version and toolchain fingerprint. A successful build can be loaded directly
@@ -149,8 +150,7 @@ by artifact ID. Artifacts expire after 30 minutes and are bounded by 128 entries
 and 8 MiB. Build history is bounded to approximately 128 records; active jobs are
 never evicted. One build runs at a time with at most 16 active/queued jobs.
 Cache keys include all sources, SDK, fixed profile, async-ebpf revision and
-automatically discovered toolchain paths/versions. The cache is process-local;
-restart spinfoam after compiler or library upgrades. Availability of a cache entry is not a durability guarantee.
+embedded compiler bytes. The cache is process-local; Availability of a cache entry is not a durability guarantee.
 
 ## Errors and transport bounds
 
@@ -171,6 +171,6 @@ Logs are limited to 1024 bytes and ten attempts per second per object, and may b
 dropped. These are operational bounds, not a total per-program memory quota.
 
 `sf.shutdown` with `{}` acknowledges shutdown, then cancels all objects/builds,
-terminates compiler sandboxes, and drains output for at most two seconds. stdin EOF,
+cancels compiler guests, and drains output for at most two seconds. stdin EOF,
 broken stdout, SIGINT and SIGTERM also trigger cleanup. Already-started JIT work
 has a bounded shutdown wait. Runtime state does not survive process exit.

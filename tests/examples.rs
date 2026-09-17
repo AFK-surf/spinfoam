@@ -10,9 +10,9 @@ async fn reply(c: &mut Client, cap: &str, result: Value) -> Value {
 }
 #[tokio::test]
 async fn github_example_notifies_on_completion() {
-    let mut c = Client::new().await;
+    let mut c = Client::with_args(&["--enable-builds"]).await;
     let id = c
-        .load(
+        .load_example(
             include_str!("../examples/github_actions.c"),
             json!({"run_id":123,"deduplication_key":"run:123"}),
             json!([{"name":"github.run.read","arguments":{"run_id":123}},{"name":"agent.notify"}]),
@@ -32,9 +32,9 @@ async fn github_example_notifies_on_completion() {
 }
 #[tokio::test]
 async fn device_example_notifies_only_on_transition() {
-    let mut c = Client::new().await;
+    let mut c = Client::with_args(&["--enable-builds"]).await;
     let id = c
-        .load(
+        .load_example(
             include_str!("../examples/homeassistant.c"),
             json!({"desired_state":"on"}),
             json!([{"name":"agent.notify"}]),
@@ -63,8 +63,8 @@ async fn device_example_notifies_only_on_transition() {
 }
 #[tokio::test]
 async fn keyword_example_matches_across_chunks() {
-    let mut c = Client::new().await;
-    let id=c.load(include_str!("../examples/web_keyword.c"),json!({"url":"https://example.invalid","keyword":"needle","deduplication_key":"page:1"}),json!([{"name":"web.read_chunk"},{"name":"agent.notify"}])).await;
+    let mut c = Client::with_args(&["--enable-builds"]).await;
+    let id=c.load_example(include_str!("../examples/web_keyword.c"),json!({"url":"https://example.invalid","keyword":"needle","deduplication_key":"page:1"}),json!([{"name":"web.read_chunk"},{"name":"agent.notify"}])).await;
     c.start(&id).await;
     reply(
         &mut c,
@@ -86,9 +86,9 @@ async fn keyword_example_matches_across_chunks() {
 }
 #[tokio::test]
 async fn webhook_example_processes_and_acknowledges() {
-    let mut c = Client::new().await;
+    let mut c = Client::with_args(&["--enable-builds"]).await;
     let id = c
-        .load(
+        .load_example(
             include_str!("../examples/webhook.c"),
             json!({}),
             json!([{"name":"agent.notify"},{"name":"webhook.ack"}]),

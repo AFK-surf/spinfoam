@@ -186,7 +186,7 @@ pub struct Runtime {
     pub host: Host,
     pub out: Outbox,
     pub timeslicer: TokioTimeslicer,
-    thread: ThreadEnv,
+    pub(crate) thread: ThreadEnv,
     next: Cell<u64>,
     pub started: Instant,
 }

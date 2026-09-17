@@ -21,6 +21,8 @@ jobs:
           docker run --rm -v "$PWD:/work" -w /work rust:bullseye sh -ec '
             . /etc/os-release
             test "$VERSION_CODENAME" = bullseye
+            sh scripts/install-llvm-bullseye.sh
+            export PATH=/usr/lib/llvm-19/bin:$PATH
             cargo build --release --locked --target ${{ matrix.target }}
             target/${{ matrix.target }}/release/spinfoam --version
           '
@@ -54,9 +56,14 @@ jobs:
       - run: brew install llvm@19
       - run: echo "$(brew --prefix llvm@19)/bin" >> "$GITHUB_PATH"
       - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
-      - name: Test Seatbelt builds
-        run: cargo test --release --locked --test build -- --include-ignored --nocapture
+      - name: Test runtime, builds and TinyCC-compiled examples
+        env:
+          SPINFOAM_EXAMPLE_COMPILER: tinycc
+        run: cargo test --locked
+      - name: Compare Clang-compiled examples
+        env:
+          SPINFOAM_EXAMPLE_COMPILER: clang
+        run: cargo test --locked --test examples
       - run: cargo build --release --locked --target ${{ matrix.target }}
       - run: target/${{ matrix.target }}/release/spinfoam --version
       - run: python3 scripts/package.py ${{ matrix.target }}
@@ -65,10 +72,3 @@ jobs:
           name: binary-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
-      - name: Sandbox failure diagnostics
-        if: failure()
-        run: |
-          sudo log show --last 5m --style compact --predicate 'eventMessage CONTAINS "spinfoam" OR eventMessage CONTAINS "ignition"' | tail -100
-          for report in "$HOME"/Library/Logs/DiagnosticReports/spinfoam*.ips; do
-            if [ -f "$report" ]; then head -c 20000 "$report"; fi
-          done

@@ -41,7 +41,7 @@ impl Client {
             output,
             next: 0,
             saved: VecDeque::new(),
-            // A configured compiler discovers its tools and runs a real sandbox probe.
+            // Allow startup under heavily loaded CI runners.
             read_timeout: Duration::from_secs(90),
         };
         let init = client
@@ -51,6 +51,41 @@ impl Client {
         client.info = init;
         client.read_timeout = Duration::from_secs(20);
         client
+    }
+    // Run identical application behavior checks against both compiler outputs in CI.
+    pub async fn load_example(
+        &mut self,
+        source: &str,
+        config: Value,
+        capabilities: Value,
+    ) -> String {
+        match std::env::var("SPINFOAM_EXAMPLE_COMPILER")
+            .as_deref()
+            .unwrap_or("tinycc")
+        {
+            "tinycc" => self.build_load(source, config, capabilities).await,
+            "clang" => self.load(source, config, capabilities).await,
+            other => panic!("unknown example compiler: {other}"),
+        }
+    }
+    pub async fn build_load(&mut self, source: &str, config: Value, capabilities: Value) -> String {
+        let build = self
+            .call(
+                "sf.build.submit",
+                json!({"sdk_version":1,"entry":"main.c","files":{"main.c":source}}),
+            )
+            .await;
+        let status = loop {
+            let status = self
+                .call("sf.build.status", json!({"build_id":build["build_id"]}))
+                .await;
+            if !matches!(status["state"].as_str(), Some("queued" | "running")) {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        assert_eq!(status["state"], "succeeded", "{status}");
+        self.call("sf.object.load",json!({"artifact_id":status["result"]["artifact_id"],"config":config,"capabilities":capabilities})).await["object_id"].as_str().unwrap().to_owned()
     }
     pub async fn close_input(&mut self) {
         self.input.take();

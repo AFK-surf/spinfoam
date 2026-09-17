@@ -1,27 +1,16 @@
 use clap::Parser;
-use std::path::PathBuf;
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
     /// Print the self-contained C SDK and exit.
     #[arg(long)]
     dump_sdk: bool,
-    /// Enable sandboxed C builds using LLVM and the platform sandbox.
+    /// Enable C builds using the embedded TinyCC eBPF compiler.
     #[arg(long)]
     enable_builds: bool,
-    #[arg(long, hide = true)]
-    sandbox_launch: Option<PathBuf>,
-    #[arg(long, hide = true)]
-    compiler_worker: Option<String>,
 }
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    if let Some(path) = args.sandbox_launch {
-        return spinfoam::build::sandbox::launch(&path);
-    }
-    if let Some(entry) = args.compiler_worker {
-        return spinfoam::build::sandbox::worker(&entry);
-    }
     if args.dump_sdk {
         print!("{}", spinfoam::SDK);
         return Ok(());

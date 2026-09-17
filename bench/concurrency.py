@@ -31,8 +31,8 @@ SF_MAIN int main(void) {
 '''
 
 class Client:
-    async def open(self, binary):
-        self.proc = await asyncio.create_subprocess_exec(str(binary), stdin=asyncio.subprocess.PIPE,
+    async def open(self, binary, builds=False):
+        self.proc = await asyncio.create_subprocess_exec(str(binary), *(["--enable-builds"] if builds else []), stdin=asyncio.subprocess.PIPE,
                                                         stdout=asyncio.subprocess.PIPE, limit=262144)
         self.pending = {}
         self.serial = 0
@@ -114,11 +114,23 @@ def compile_object():
 
 
 async def run(args):
-    elf = compile_object()
+    client = Client()
+    info = await client.open(args.binary.resolve(), args.compiler == 'tinycc')
+    before_compile = memory(client.proc.pid)
+    if args.compiler == 'tinycc':
+        job = await client.call('sf.build.submit', {'sdk_version': 1, 'entry': 'main.c', 'files': {'main.c': SOURCE}})
+        while True:
+            status = await client.call('sf.build.status', {'build_id': job['build_id']})
+            if status['state'] not in ('queued', 'running'):
+                break
+            await asyncio.sleep(0.01)
+        assert status['state'] == 'succeeded', status
+        artifact = await client.call('sf.artifact.get', {'artifact_id': status['result']['artifact_id']})
+        elf = base64.b64decode(artifact['elf'])
+    else:
+        elf = compile_object()
     marker = struct.pack('<Q', MARKER)
     assert elf.count(marker) == 1
-    client = Client()
-    info = await client.open(args.binary.resolve())
     baseline = memory(client.proc.pid)
     semaphore = asyncio.Semaphore(24)
     objects = []
@@ -179,6 +191,7 @@ async def run(args):
               'binary_sha256': hashlib.sha256(args.binary.read_bytes()).hexdigest(),
               'source_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)), 'git_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
               'vm_max_map_count': int(Path('/proc/sys/vm/max_map_count').read_text()), 'runtime': info,
+              'compiler': args.compiler, 'before_compile': before_compile,
               'baseline': baseline, 'active': active, 'after_events': mixed, 'after_soak': after_soak,
               'after_unload': after_unload, 'load_seconds': load_seconds, 'event_seconds': event_seconds,
               'event_acknowledgements': client.acks, 'soak_seconds': args.soak_seconds,
@@ -193,6 +206,7 @@ async def run(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/release/spinfoam')
+    parser.add_argument('--compiler', choices=['tinycc', 'llvm'], default='tinycc')
     parser.add_argument('--count', type=int, default=10000)
     parser.add_argument('--soak-seconds', type=int, default=60)
     parser.add_argument('--output', type=Path, default=ROOT / 'bench/results/concurrency.json')

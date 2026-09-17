@@ -23,8 +23,7 @@ async fn disabled_builds_fail_closed() {
     client.shutdown().await;
 }
 #[tokio::test]
-#[ignore = "requires LLVM and a working platform sandbox"]
-async fn sandboxed_compiler_end_to_end() {
+async fn embedded_compiler_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = Client::with_args(&["--enable-builds"]).await;
     assert_eq!(
@@ -88,13 +87,8 @@ async fn sandboxed_compiler_end_to_end() {
         status["result"]["error"]
             .as_str()
             .unwrap()
-            .to_lowercase()
-            .contains("file not found")
-            || status["result"]["error"]
-                .as_str()
-                .unwrap()
-                .to_lowercase()
-                .contains("operation not permitted")
+            .contains("not found"),
+        "{status}"
     );
     // Invalid C reports diagnostics and leaves compilation usable.
     let build = client
@@ -139,92 +133,116 @@ async fn sandboxed_compiler_end_to_end() {
         let result = finish(&mut client, build["build_id"].as_str().unwrap()).await;
         assert_eq!(result["state"], "succeeded", "{result}");
     }
-    // Cancel while a compiler is running and check its processes disappear.
-    let minimum_children = if cfg!(target_os = "linux") { 3 } else { 1 };
+    // Cancelling the eBPF compiler releases its guest without spawning a child process.
     let build = client
         .call(
             "sf.build.submit",
             json!({"sdk_version":1,"entry":"cancel.c","files":{"cancel.c":bomb}}),
         )
         .await;
-    let mut children = Vec::new();
     for _ in 0..200 {
-        children = descendants(client.child.id().unwrap());
-        if children.len() >= minimum_children {
+        let status = client
+            .call("sf.build.status", json!({"build_id":build["build_id"]}))
+            .await;
+        if status["state"] == "running" {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    assert!(children.len() >= minimum_children, "compiler never started");
+    // Let this expensive compilation progress beyond admission/loading before cancellation.
+    tokio::time::sleep(Duration::from_secs(1)).await;
     let status = client
         .call("sf.build.cancel", json!({"build_id":build["build_id"]}))
         .await;
     assert_eq!(status["state"], "cancelled");
-    for _ in 0..200 {
-        if children.iter().all(|pid| !is_live(*pid)) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    assert!(
-        children.iter().all(|pid| !is_live(*pid)),
-        "sandbox descendants survived cancellation: {children:?}"
-    );
     client.shutdown().await;
 }
 
 #[tokio::test]
-async fn missing_compiler_tools_fail_closed() {
-    let client = Client::with_env(&["--enable-builds"], &[("PATH", "")]).await;
-    assert_eq!(client.info["compiler"]["available"], false);
-    assert!(
-        client.info["compiler"]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("clang is not in PATH")
-    );
+async fn builds_need_no_host_tools() {
+    let mut client = Client::with_env(&["--enable-builds"], &[("PATH", "")]).await;
+    assert_eq!(client.info["compiler"]["available"], true);
+    let build = client.call("sf.build.submit", json!({"sdk_version":1,"entry":"main.c","files":{"main.c":"#include <spinfoam.h>\nSF_MAIN int main(void){return 7;}"}})).await;
+    let status = finish(&mut client, build["build_id"].as_str().unwrap()).await;
+    assert_eq!(status["state"], "succeeded", "{status}");
     client.shutdown().await;
 }
 
-// /proc checks are confined to the sandbox integration test, never the runtime.
-#[cfg(target_os = "linux")]
-fn descendants(pid: u32) -> Vec<u32> {
-    let children =
-        std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).unwrap_or_default();
-    let mut result = Vec::new();
-    for child in children.split_whitespace().filter_map(|s| s.parse().ok()) {
-        result.push(child);
-        result.extend(descendants(child));
-    }
-    result
-}
-#[cfg(target_os = "linux")]
-fn is_live(pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-        !stat
-            .rsplit_once(") ")
-            .is_some_and(|(_, tail)| tail.starts_with("Z ") || tail.starts_with("X "))
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn descendants(pid: u32) -> Vec<u32> {
-    let mut pids = [0i32; 128];
-    let count = unsafe {
-        libc::proc_listchildpids(
-            pid as i32,
-            pids.as_mut_ptr().cast(),
-            std::mem::size_of_val(&pids) as i32,
+#[tokio::test]
+async fn virtual_headers_diagnostics_and_output_bounds() {
+    let mut client = Client::with_args(&["--enable-builds"]).await;
+    let request = json!({"sdk_version":1,"entry":"nested/main.c","files":{
+        "nested/main.c":"#include <spinfoam.h>\n#include \"../include/value.h\"\n#warning sample diagnostic\nSF_MAIN sf_i64 main(void){return compute(19);}",
+        "include/value.h":"static unsigned long compute(unsigned long x){ unsigned long y=x/4; unsigned long z=x%4; return (y==4 && z==3) ? 42 : 99;}\n"
+    }});
+    let build = client.call("sf.build.submit", request).await;
+    let status = finish(&mut client, build["build_id"].as_str().unwrap()).await;
+    assert_eq!(status["state"], "succeeded", "{status}");
+    assert!(
+        status["result"]["diagnostics"]
+            .as_str()
+            .unwrap()
+            .contains("sample diagnostic"),
+        "{status}"
+    );
+    let loaded = client
+        .call(
+            "sf.object.load",
+            json!({"artifact_id":status["result"]["artifact_id"]}),
         )
-    };
-    let mut result = Vec::new();
-    for child in pids.iter().take(count.max(0) as usize).filter(|p| **p > 0) {
-        result.push(*child as u32);
-        result.extend(descendants(*child as u32));
-    }
-    result
-}
-#[cfg(target_os = "macos")]
-fn is_live(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+        .await;
+    let id = loaded["object_id"].as_str().unwrap();
+    client.start(id).await;
+    assert_eq!(client.terminal(id).await["outcome"]["exit_code"], 42);
+    // Initialized output too large to retain, including materialized zero globals.
+    let source = "#include <spinfoam.h>\nvolatile char storage[70000]; SF_MAIN int main(void){return storage[0];}";
+    let build = client
+        .call(
+            "sf.build.submit",
+            json!({"sdk_version":1,"entry":"big.c","files":{"big.c":source}}),
+        )
+        .await;
+    let status = finish(&mut client, build["build_id"].as_str().unwrap()).await;
+    assert_eq!(status["state"], "failed", "{status}");
+    assert!(
+        status["result"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("64 KiB"),
+        "{status}"
+    );
+    // Unsupported backend operations fail explicitly rather than emitting native code.
+    let source =
+        "#include <spinfoam.h>\nvolatile long n = -19; SF_MAIN long main(void){return n/4;}";
+    let build = client
+        .call(
+            "sf.build.submit",
+            json!({"sdk_version":1,"entry":"signed.c","files":{"signed.c":source}}),
+        )
+        .await;
+    let status = finish(&mut client, build["build_id"].as_str().unwrap()).await;
+    assert_eq!(status["state"], "failed", "{status}");
+    assert!(
+        status["result"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("signed division"),
+        "{status}"
+    );
+    // Neither a prior build's files nor preprocessor definitions survive.
+    let build = client.call("sf.build.submit",json!({"sdk_version":1,"entry":"next.c","files":{"next.c":"#include \"include/value.h\""}})).await;
+    assert_eq!(
+        finish(&mut client, build["build_id"].as_str().unwrap()).await["state"],
+        "failed"
+    );
+    let id = client
+        .build_load(
+            "#include <spinfoam.h>\nSF_MAIN int main(void){return 9;}",
+            json!({}),
+            json!([]),
+        )
+        .await;
+    client.start(&id).await;
+    assert_eq!(client.terminal(&id).await["outcome"]["exit_code"], 9);
+    client.shutdown().await;
 }

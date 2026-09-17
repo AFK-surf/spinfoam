@@ -1,9 +1,4 @@
-#[cfg(target_os = "linux")]
-pub mod sandbox;
-#[cfg(target_os = "macos")]
-#[path = "sandbox_macos.rs"]
-pub mod sandbox;
-pub mod toolchain;
+pub mod compiler;
 use crate::{
     error::{RpcError, RpcResult},
     outbox::Outbox,
@@ -24,7 +19,6 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use toolchain::Toolchain;
 
 #[derive(Clone)]
 pub struct Config;
@@ -112,7 +106,7 @@ impl Job {
     }
 }
 pub struct Builds {
-    toolchain: Option<Toolchain>,
+    runtime: Rc<crate::runtime::Runtime>,
     unavailable: Option<String>,
     fingerprint: String,
     jobs: RefCell<BTreeMap<String, Rc<Job>>>,
@@ -122,42 +116,24 @@ pub struct Builds {
     out: Outbox,
 }
 impl Builds {
-    pub async fn new(config: Option<Config>, out: Outbox) -> Rc<Self> {
-        let setup = async {
-            let _config = config
-                .ok_or_else(|| anyhow::anyhow!("pass --enable-builds to enable compilation"))?;
-            let toolchain = tokio::task::spawn_blocking(Toolchain::discover).await??;
-            // A real compile probes the full sandbox, toolchain ABI and required controls.
-            let files = BTreeMap::from([(
-                "main.c".to_owned(),
-                "#include \"spinfoam.h\"\nSF_MAIN int main(void){return 0;}".to_owned(),
-            )]);
-            sandbox::run(&toolchain, &files, "main.c", &CancellationToken::new()).await?;
-            let fingerprint = crate::sha256(
-                format!(
-                    "{}:{}:{}:{}",
-                    toolchain.digest(),
-                    crate::ASYNC_EBPF_REVISION,
-                    crate::SDK,
-                    "bpfel-v3-frame4096-O2-nozero-bss-v1"
-                )
-                .as_bytes(),
-            );
-            Ok::<_, anyhow::Error>((toolchain, fingerprint))
-        }
-        .await;
-        let (toolchain, fingerprint, unavailable) = match setup {
-            Ok((t, f)) => (Some(t), f, None),
-            Err(e) => {
-                let reason = format!("{e:#}");
-                tracing::info!(%reason,"compiler unavailable");
-                (None, String::new(), Some(reason))
-            }
-        };
+    pub async fn new(
+        config: Option<Config>,
+        out: Outbox,
+        runtime: Rc<crate::runtime::Runtime>,
+    ) -> Rc<Self> {
         Rc::new(Self {
-            toolchain,
-            unavailable,
-            fingerprint,
+            runtime,
+            unavailable: config
+                .is_none()
+                .then(|| "pass --enable-builds to enable compilation".to_owned()),
+            fingerprint: crate::sha256(
+                &[
+                    compiler::OBJECT,
+                    crate::SDK.as_bytes(),
+                    crate::ASYNC_EBPF_REVISION.as_bytes(),
+                ]
+                .concat(),
+            ),
             jobs: Default::default(),
             artifacts: Default::default(),
             next: Cell::new(0),
@@ -166,7 +142,7 @@ impl Builds {
         })
     }
     pub fn info(&self) -> Value {
-        json!({"available":self.toolchain.is_some(),"reason":self.unavailable,"fingerprint":self.fingerprint,"clang_version":self.toolchain.as_ref().map(|t|&t.clang_version),"llc_version":self.toolchain.as_ref().map(|t|&t.llc_version)})
+        json!({"available":self.unavailable.is_none(),"reason":self.unavailable,"fingerprint":self.fingerprint,"name":"tinycc-in-ebpf","revision":compiler::REVISION,"target":"bpfel","embedded":true})
     }
     pub fn submit(self: &Rc<Self>, params: Value) -> RpcResult {
         let request: Request = serde_json::from_value(params).map_err(RpcError::params)?;
@@ -220,13 +196,9 @@ impl Builds {
                 let permit = tokio::select! {biased;_=job.cancel.cancelled()=>None,p=this.slots.clone().acquire_owned()=>p.ok()};
                 if let Some(_permit) = permit {
                     job.state.set("running");
-                    let result = sandbox::run(
-                        this.toolchain.as_ref().unwrap(),
-                        &request.files,
-                        &request.entry,
-                        &job.cancel,
-                    )
-                    .await;
+                    let result =
+                        compiler::run(&this.runtime, &request.files, &request.entry, &job.cancel)
+                            .await;
                     if job.cancel.is_cancelled() {
                         job.state.set("cancelled");
                     } else {

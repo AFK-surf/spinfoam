@@ -22,9 +22,10 @@ pub struct Service {
 }
 impl Service {
     pub async fn new(out: Outbox, config: Option<crate::build::Config>) -> Rc<Self> {
-        let builds = crate::build::Builds::new(config, out.clone()).await;
+        let runtime = Runtime::new(out.clone());
+        let builds = crate::build::Builds::new(config, out.clone(), runtime.clone()).await;
         Rc::new(Self {
-            runtime: Runtime::new(out),
+            runtime,
             builds,
             initialized: Cell::new(false),
             shutdown: CancellationToken::new(),

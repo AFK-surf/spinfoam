@@ -1,0 +1,92 @@
+{
+  "count": 10000,
+  "platform": "Linux-6.12.101+deb13-cloud-amd64-x86_64-with-glibc2.41",
+  "cpu": "",
+  "cpu_count": 8,
+  "binary_sha256": "7cdb4103717f433a0763c811ca8be9ce7b10ab33cf775cd98c9394c5f1c3e73b",
+  "source_dirty": true,
+  "git_revision": "9ff857bf67345abe914c2955935fdb4a68452cdb",
+  "vm_max_map_count": 1048576,
+  "runtime": {
+    "async_ebpf_revision": "7e8a7cbce195d68a1d579608b7a28b55f6fce7fd",
+    "compiler": {
+      "available": true,
+      "embedded": true,
+      "fingerprint": "2539c7f9d36bde3aec3016e379b30b5af07be5c0d8aaf547817e259c0ac3205a",
+      "name": "tinycc-in-ebpf",
+      "reason": null,
+      "revision": "ac2dd4a1011674ed3f55eb99bc8fa22bdf635daa",
+      "target": "bpfel"
+    },
+    "limits": {
+      "frame_bytes": 262144,
+      "handles": 128,
+      "mailbox_bytes": 32768,
+      "mailbox_entries": 32,
+      "value_bytes": 16384
+    },
+    "memory_target_bytes": 1000000,
+    "memory_target_enforced": false,
+    "protocol_version": 1,
+    "sdk_version": 1,
+    "session_id": "bad33b52be2c187433938d7ab552a592",
+    "target": "linux-x86_64"
+  },
+  "compiler": "tinycc",
+  "before_compile": {
+    "rss": 5275648,
+    "pss": 3806208,
+    "vmas": 37,
+    "VmSize": 77033472,
+    "VmPTE": 61440,
+    "threads": 2
+  },
+  "baseline": {
+    "rss": 23056384,
+    "pss": 21586944,
+    "vmas": 48,
+    "VmSize": 156246016,
+    "VmPTE": 106496,
+    "threads": 3
+  },
+  "active": {
+    "rss": 670285824,
+    "pss": 668816384,
+    "vmas": 240083,
+    "VmSize": 41613590528,
+    "VmPTE": 78172160,
+    "threads": 4
+  },
+  "after_events": {
+    "rss": 698687488,
+    "pss": 697218048,
+    "vmas": 240083,
+    "VmSize": 41636704256,
+    "VmPTE": 78225408,
+    "threads": 4
+  },
+  "after_soak": {
+    "rss": 698818560,
+    "pss": 697263104,
+    "vmas": 240079,
+    "VmSize": 41636679680,
+    "VmPTE": 78225408,
+    "threads": 2
+  },
+  "after_unload": {
+    "rss": 573321216,
+    "pss": 571765760,
+    "vmas": 182011,
+    "VmSize": 5312778240,
+    "VmPTE": 44687360,
+    "threads": 2
+  },
+  "load_seconds": 2.9264464469160885,
+  "event_seconds": 1.6432356238365173,
+  "event_acknowledgements": 10000,
+  "soak_seconds": 60,
+  "control_p50_ms": 0.18604507204145193,
+  "control_p99_ms": 0.3070239908993244,
+  "incremental_active_pss_per_program": 64722.944,
+  "incremental_mixed_pss_per_program": 67563.1104
+}
