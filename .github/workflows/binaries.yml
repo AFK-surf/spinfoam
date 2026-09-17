@@ -68,7 +68,7 @@ jobs:
       - name: Sandbox failure diagnostics
         if: failure()
         run: |
-          sudo log show --last 5m --style compact --predicate 'eventMessage CONTAINS "Sandbox:"' | tail -100
+          sudo log show --last 5m --style compact --predicate 'eventMessage CONTAINS "spinfoam" OR eventMessage CONTAINS "ignition"' | tail -100
           for report in "$HOME"/Library/Logs/DiagnosticReports/spinfoam*.ips; do
             if [ -f "$report" ]; then head -c 20000 "$report"; fi
           done
