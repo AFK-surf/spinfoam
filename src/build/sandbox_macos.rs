@@ -65,7 +65,7 @@ fn profile(
     );
     for library in toolchain.libraries.values() {
         policy.push_str(&format!(
-            "(allow file-read* (literal {}))
+            "(allow file-read* file-map-executable (literal {}))
 ",
             quoted(library)?
         ));
