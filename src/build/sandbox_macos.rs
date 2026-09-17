@@ -48,6 +48,10 @@ fn profile(
 (allow process-info* (target self))
 (allow sysctl-read)
 (allow file-read-metadata)
+(allow file-map-executable (subpath "/System/Library") (subpath "/usr/lib"))
+(allow file-read* file-map-executable
+    (subpath "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld")
+    (subpath "/private/var/db/dyld"))
 (allow file-read* (subpath "/System/Library") (subpath "/usr/lib")
     (literal "/dev/null") (literal "/dev/random") (literal "/dev/urandom")
     (subpath {}) (subpath {}) (literal {}))
