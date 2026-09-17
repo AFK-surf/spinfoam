@@ -42,37 +42,34 @@ Install Clang/LLVM and Bubblewrap and put `clang`, `llc`, `bwrap` and `ldd`
 in PATH. spinfoam discovers the tools and their shared libraries automatically.
 LLVM 19.1.7 and Bubblewrap 0.12.0 from Debian 13 were used for local qualification.
 
-Run spinfoam inside a **delegated cgroup v2 subtree** with the `cpu`, `memory` and
-`pids` controllers enabled for children. Its runtime process must be in a leaf
-under that subtree; the subtree itself must be empty so domain controllers can
-be enabled. The runtime user needs permission to create child cgroups and move
-its own processes within the subtree. A systemd service with `Delegate=yes` can
-provide delegation; your service launcher arranges the runtime leaf and enables
-the controllers. spinfoam never escalates privileges or changes host delegation.
-The optional [run-delegated.sh](scripts/run-delegated.sh) launcher creates the runtime
-leaf and enables child controllers within an already delegated, exclusive subtree;
-invoke it from inside that subtree with the binary.
-
-Enable compilation by passing the delegated subtree:
+Enable compilation with one flag:
 
 ```sh
-target/release/spinfoam \
-  --compiler-cgroup /sys/fs/cgroup/your-delegated-subtree
+target/release/spinfoam --enable-builds
 ```
+
+No cgroup delegation or privileged launcher is needed. The host must permit
+unprivileged user namespaces.
 
 The startup probe executes a real sandboxed build. `sf.initialize` reports whether
 it succeeded and why it failed otherwise. Builds fail closed if namespaces,
-seccomp, compiler tools or cgroup controls are unavailable; existing ELF execution
+seccomp, compiler tools or resource limits are unavailable; existing ELF execution
 remains usable. There is no insecure bypass flag. Restart spinfoam after upgrading the compiler
 tools or libraries; discovery and the build cache are scoped to one process.
 
-Each build uses separate user/mount/PID/network/IPC/UTS/cgroup namespaces, a
+Each build uses separate user/mount/PID/network/IPC/UTS namespaces, a
 syscall allowlist, no-new-privileges, dropped capabilities, read-only source/SDK/
 toolchain mounts and a 16 MiB writable tmpfs. Only the discovered libraries and tools
-are mounted, not the host filesystem. Limits are 256 MiB memory, no swap, 16 tasks,
-one CPU of bandwidth, five CPU seconds and a 15-second wall deadline. Cancellation
-kills the entire build cgroup and reaps its processes. Builds return retrievable
-ELF artifacts through the same JSON-RPC connection.
+are mounted, not the host filesystem. Each compiler process has a 1 GiB address-space
+limit, a 256 MiB data/allocation limit and a five-second CPU limit. These are
+per-process limits, not an aggregate RSS quota or CPU bandwidth control. Compiler
+threads share those budgets; a second seccomp filter denies new child processes.
+The trusted worker launches Clang and LLVM sequentially. The build also has a
+15-second wall deadline, 64-descriptor limit and 16 MiB file-size limit.
+
+On cancellation or timeout, Bubblewrap terminates the worker (PID 1 in its private
+namespace), causing the kernel to kill the remaining sandbox processes. Builds
+return retrievable ELF artifacts through the same JSON-RPC connection.
 
 ## Test and benchmark
 
@@ -84,12 +81,11 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo fmt --all --check
 ```
 
-The additional sandbox integration test requires the same cgroup delegation as
-the production build service. Run the test process inside the runtime leaf:
+The additional Linux sandbox integration test needs Clang/LLVM, Bubblewrap and
+working unprivileged user namespaces:
 
 ```sh
-SPINFOAM_TEST_CGROUP=/sys/fs/cgroup/your-delegated-subtree \
-  cargo test --locked --test build -- --include-ignored --nocapture
+cargo test --release --locked --test build -- --include-ignored --nocapture
 ```
 
 It tests real compilation/artifact execution, host-file isolation, source-path
@@ -131,6 +127,6 @@ The tarballs include the binary, C SDK, examples and documentation.
 
 On macOS, use uploaded eBPF objects or build them on a Linux spinfoam instance;
 the local compiler service reports unavailable. Linux compiler isolation needs
-a recent kernel with cgroup v2 whole-job kill support and a recent bubblewrap
+unprivileged user namespaces and a recent bubblewrap
 supporting the required namespace and mount controls. Bullseye specifies binary
 glibc compatibility, not that its stock kernel/bubblewrap supports the sandbox.

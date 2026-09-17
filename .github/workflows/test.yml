@@ -27,13 +27,8 @@ jobs:
           if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
-      - name: Test sandboxed builds in a delegated cgroup
-        run: |
-          sudo mkdir /sys/fs/cgroup/spinfoam-ci
-          echo '+cpu +memory +pids' | sudo tee /sys/fs/cgroup/spinfoam-ci/cgroup.subtree_control
-          sudo chown "$(id -u):$(id -g)" /sys/fs/cgroup/spinfoam-ci /sys/fs/cgroup/spinfoam-ci/cgroup.procs /sys/fs/cgroup/spinfoam-ci/cgroup.threads /sys/fs/cgroup/spinfoam-ci/cgroup.subtree_control
-          sudo mkdir /sys/fs/cgroup/spinfoam-ci/runtime
-          sudo -E sh -c 'echo $$ > /sys/fs/cgroup/spinfoam-ci/runtime/cgroup.procs; exec setpriv --reuid="$1" --regid="$2" --init-groups env "PATH=$3" SPINFOAM_TEST_CGROUP=/sys/fs/cgroup/spinfoam-ci "$4" test --release --locked --test build -- --include-ignored --nocapture' sh "$(id -u)" "$(id -g)" "$PATH" "$(command -v cargo)"
+      - name: Test sandboxed builds without privileges or cgroup delegation
+        run: cargo test --release --locked --test build -- --include-ignored --nocapture
       - name: Concurrency smoke test
         run: python3 bench/concurrency.py --count 1000 --soak-seconds 1
       - uses: actions/upload-artifact@v4

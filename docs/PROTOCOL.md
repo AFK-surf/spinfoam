@@ -132,7 +132,7 @@ plus headers, little-endian BPF v3, and 4096-byte frames.
 
 Submission returns a `build_id` and status. `sf.build.status` and `sf.build.cancel`
 take `{ "build_id": "b1" }`. States: `queued`, `running`, `succeeded`, `failed`,
-`cancelled`. Cancellation waits for whole-job cleanup. `sf.build.finished` is an
+`cancelled`. Cancellation terminates the sandbox through Bubblewrap and waits for the launcher to exit. `sf.build.finished` is an
 advisory notification; query status for the authoritative result.
 
 Successful `result` fields include `artifact_id`, `sha256`, `sdk_version`, `cached`,
@@ -171,6 +171,6 @@ Logs are limited to 1024 bytes and ten attempts per second per object, and may b
 dropped. These are operational bounds, not a total per-program memory quota.
 
 `sf.shutdown` with `{}` acknowledges shutdown, then cancels all objects/builds,
-reaps compiler processes, and drains output for at most two seconds. stdin EOF,
+terminates compiler sandboxes, and drains output for at most two seconds. stdin EOF,
 broken stdout, SIGINT and SIGTERM also trigger cleanup. Already-started JIT work
 has a bounded shutdown wait. Runtime state does not survive process exit.

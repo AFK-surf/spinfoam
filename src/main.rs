@@ -6,9 +6,9 @@ struct Args {
     /// Print the self-contained C SDK and exit.
     #[arg(long)]
     dump_sdk: bool,
-    /// Enable builds using tools from PATH and this delegated cgroup v2 subtree.
+    /// Enable sandboxed C builds using clang, llc and bwrap from PATH.
     #[arg(long)]
-    compiler_cgroup: Option<PathBuf>,
+    enable_builds: bool,
     #[arg(long, hide = true)]
     sandbox_launch: Option<PathBuf>,
     #[arg(long, hide = true)]
@@ -36,9 +36,7 @@ fn main() -> anyhow::Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .init();
-    let config = args
-        .compiler_cgroup
-        .map(|cgroup| spinfoam::build::Config { cgroup });
+    let config = args.enable_builds.then_some(spinfoam::build::Config);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .max_blocking_threads(2)

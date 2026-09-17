@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
-    path::{Component, Path, PathBuf},
+    path::{Component, Path},
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -27,9 +27,7 @@ use tokio_util::sync::CancellationToken;
 use toolchain::Toolchain;
 
 #[derive(Clone)]
-pub struct Config {
-    pub cgroup: PathBuf,
-}
+pub struct Config;
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -115,7 +113,6 @@ impl Job {
 }
 pub struct Builds {
     toolchain: Option<Toolchain>,
-    root: Option<PathBuf>,
     unavailable: Option<String>,
     fingerprint: String,
     jobs: RefCell<BTreeMap<String, Rc<Job>>>,
@@ -130,23 +127,15 @@ impl Builds {
             if !cfg!(target_os = "linux") {
                 anyhow::bail!("sandboxed compilation currently requires Linux");
             }
-            let config = config
-                .ok_or_else(|| anyhow::anyhow!("configure --compiler-cgroup to enable builds"))?;
+            let _config = config
+                .ok_or_else(|| anyhow::anyhow!("pass --enable-builds to enable compilation"))?;
             let toolchain = tokio::task::spawn_blocking(Toolchain::discover).await??;
-            let root = std::fs::canonicalize(config.cgroup)?;
             // A real compile probes the full sandbox, toolchain ABI and required controls.
             let files = BTreeMap::from([(
                 "main.c".to_owned(),
                 "#include \"spinfoam.h\"\nSF_MAIN int main(void){return 0;}".to_owned(),
             )]);
-            sandbox::run(
-                &toolchain,
-                &root,
-                &files,
-                "main.c",
-                &CancellationToken::new(),
-            )
-            .await?;
+            sandbox::run(&toolchain, &files, "main.c", &CancellationToken::new()).await?;
             let fingerprint = crate::sha256(
                 format!(
                     "{}:{}:{}:{}",
@@ -157,20 +146,19 @@ impl Builds {
                 )
                 .as_bytes(),
             );
-            Ok::<_, anyhow::Error>((toolchain, root, fingerprint))
+            Ok::<_, anyhow::Error>((toolchain, fingerprint))
         }
         .await;
-        let (toolchain, root, fingerprint, unavailable) = match setup {
-            Ok((t, r, f)) => (Some(t), Some(r), f, None),
+        let (toolchain, fingerprint, unavailable) = match setup {
+            Ok((t, f)) => (Some(t), f, None),
             Err(e) => {
                 let reason = format!("{e:#}");
                 tracing::info!(%reason,"compiler unavailable");
-                (None, None, String::new(), Some(reason))
+                (None, String::new(), Some(reason))
             }
         };
         Rc::new(Self {
             toolchain,
-            root,
             unavailable,
             fingerprint,
             jobs: Default::default(),
@@ -237,7 +225,6 @@ impl Builds {
                     job.state.set("running");
                     let result = sandbox::run(
                         this.toolchain.as_ref().unwrap(),
-                        this.root.as_ref().unwrap(),
                         &request.files,
                         &request.entry,
                         &job.cancel,

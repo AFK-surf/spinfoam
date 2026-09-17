@@ -41,7 +41,7 @@ archive = dist / f"{name}.tar.gz"
 with tarfile.open(archive, "w:gz") as output:
     output.add(f"target/{target}/release/spinfoam", arcname=f"{name}/spinfoam")
     for source in ["LICENSE", "README.md", "DESIGN.md", "sdk", "docs", "examples",
-                   "bench/RESULTS.md", "bench/measurements", "scripts/run-delegated.sh"]:
+                   "bench/RESULTS.md", "bench/measurements"]:
         output.add(source, arcname=f"{name}/{source}")
 checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
 (dist / f"{name}.sha256").write_text(f"{checksum}  {archive.name}\n")

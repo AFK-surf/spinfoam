@@ -1,5 +1,5 @@
 use super::toolchain::Toolchain;
-use anyhow::{Context, bail};
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
@@ -19,67 +19,12 @@ pub const MAX_DIAGNOSTICS: usize = 64 * 1024;
 #[derive(Serialize, Deserialize)]
 pub struct Launch {
     pub toolchain: Toolchain,
-    pub cgroup: PathBuf,
     pub sources: PathBuf,
     pub sdk: PathBuf,
     pub runner: PathBuf,
     pub entry: String,
     pub filter: PathBuf,
 }
-pub struct Cgroup {
-    pub path: PathBuf,
-}
-impl Cgroup {
-    pub fn new(root: &Path) -> anyhow::Result<Self> {
-        let root = std::fs::canonicalize(root)?;
-        let directory = File::open(&root)?;
-        let mut fs = std::mem::MaybeUninit::<libc::statfs>::uninit();
-        // SAFETY: fstatfs initializes the supplied statfs on success.
-        let is_cgroup = unsafe {
-            libc::fstatfs(directory.as_raw_fd(), fs.as_mut_ptr()) == 0
-                && fs.assume_init().f_type == libc::CGROUP2_SUPER_MAGIC
-        };
-        if !is_cgroup {
-            bail!("compiler cgroup root is not a cgroup v2 filesystem");
-        }
-        let path = root.join(format!("spinfoam-{:032x}", rand::random::<u128>()));
-        std::fs::create_dir(&path).context("create delegated build cgroup")?;
-        let group = Self { path };
-        for (file, value) in [
-            ("memory.max", "268435456"),
-            ("memory.swap.max", "0"),
-            ("memory.oom.group", "1"),
-            ("pids.max", "16"),
-            ("cpu.max", "100000 100000"),
-        ] {
-            std::fs::write(group.path.join(file), value).with_context(|| format!("set {file}"))?;
-        }
-        // Require whole-job kill support before launching anything.
-        OpenOptions::new()
-            .write(true)
-            .open(group.path.join("cgroup.kill"))?;
-        Ok(group)
-    }
-    pub fn kill(&self) {
-        let _ = std::fs::write(self.path.join("cgroup.kill"), "1");
-    }
-    pub fn cpu_used(&self) -> anyhow::Result<u64> {
-        let stats = std::fs::read_to_string(self.path.join("cpu.stat"))?;
-        stats
-            .lines()
-            .find_map(|l| l.strip_prefix("usage_usec "))
-            .context("missing CPU accounting")?
-            .parse()
-            .context("invalid CPU accounting")
-    }
-}
-impl Drop for Cgroup {
-    fn drop(&mut self) {
-        self.kill();
-        let _ = std::fs::remove_dir(&self.path);
-    }
-}
-
 /// A classic BPF seccomp allowlist, installed by bubblewrap after namespace setup.
 /// Other architectures are killed; clone3 gets ENOSYS so libc uses clone/vfork.
 pub fn filter() -> Vec<u8> {
@@ -171,6 +116,11 @@ pub fn filter() -> Vec<u8> {
         #[cfg(target_arch = "x86_64")]
         libc::SYS_pipe,
         libc::SYS_pipe2,
+        libc::SYS_socketpair,
+        libc::SYS_sendmsg,
+        libc::SYS_recvmsg,
+        libc::SYS_sendto,
+        libc::SYS_recvfrom,
         libc::SYS_clone,
         #[cfg(target_arch = "x86_64")]
         libc::SYS_vfork,
@@ -236,11 +186,6 @@ pub fn filter() -> Vec<u8> {
 /// Runs only in a freshly exec'd launcher, never in a post-fork callback.
 pub fn launch(path: &Path) -> anyhow::Result<()> {
     let cfg: Launch = serde_json::from_slice(&std::fs::read(path)?)?;
-    std::fs::write(
-        cfg.cgroup.join("cgroup.procs"),
-        std::process::id().to_string(),
-    )
-    .context("join build cgroup (launcher must already be inside its delegated subtree)")?;
     unsafe {
         if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
             bail!("no_new_privs: {}", std::io::Error::last_os_error());
@@ -268,12 +213,15 @@ pub fn launch(path: &Path) -> anyhow::Result<()> {
     }
     let mut cmd = Command::new(&cfg.toolchain.bwrap);
     cmd.args([
-        "--unshare-all",
         "--unshare-user",
-        "--unshare-cgroup",
+        "--unshare-pid",
+        "--unshare-net",
+        "--unshare-ipc",
+        "--unshare-uts",
         "--disable-userns",
         "--new-session",
         "--die-with-parent",
+        "--as-pid-1",
         "--cap-drop",
         "ALL",
         "--clearenv",
@@ -343,13 +291,120 @@ pub fn launch(path: &Path) -> anyhow::Result<()> {
         .arg(&cfg.entry);
     Err(cmd.exec().into())
 }
+/// Limits native compiler processes without host-wide accounting or delegation.
+/// The worker's fork/exec path is trusted; compiler children may create threads
+/// but cannot fork new processes to multiply their CPU/address-space budgets.
+fn compiler_command(path: &str) -> Command {
+    let mut cmd = Command::new(path);
+    const DENY: u32 = 0x00050000 | libc::EPERM as u32;
+    const ALLOW: u32 = 0x7fff0000;
+    let mut filter = vec![
+        libc::sock_filter {
+            code: 0x20,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        },
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: libc::SYS_clone3 as u32,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: 0x00050000 | libc::ENOSYS as u32,
+        },
+    ];
+    #[cfg(target_arch = "x86_64")]
+    for nr in [libc::SYS_fork, libc::SYS_vfork] {
+        filter.push(libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 1,
+            k: nr as u32,
+        });
+        filter.push(libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: DENY,
+        });
+    }
+    filter.extend([
+        libc::sock_filter {
+            code: 0x15,
+            jt: 0,
+            jf: 3,
+            k: libc::SYS_clone as u32,
+        },
+        libc::sock_filter {
+            code: 0x20,
+            jt: 0,
+            jf: 0,
+            k: 16,
+        }, // args[0], low 32 bits
+        libc::sock_filter {
+            code: 0x45,
+            jt: 1,
+            jf: 0,
+            k: libc::CLONE_THREAD as u32,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: DENY,
+        },
+        libc::sock_filter {
+            code: 0x06,
+            jt: 0,
+            jf: 0,
+            k: ALLOW,
+        },
+    ]);
+    // SAFETY: the post-fork callback only reads preallocated data and makes
+    // async-signal-safe libc/syscall calls. It does not allocate or acquire locks.
+    unsafe {
+        cmd.pre_exec(move || {
+            for (resource, limit) in [
+                (libc::RLIMIT_AS, 1024 * 1024 * 1024),
+                (libc::RLIMIT_DATA, 256 * 1024 * 1024),
+                (libc::RLIMIT_CPU, 5),
+            ] {
+                let r = libc::rlimit {
+                    rlim_cur: limit,
+                    rlim_max: limit,
+                };
+                if libc::setrlimit(resource, &r) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let program = libc::sock_fprog {
+                len: filter.len() as u16,
+                filter: filter.as_ptr().cast_mut(),
+            };
+            if libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &program) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    cmd
+}
+
 /// The same binary, inside the completed sandbox, executes only fixed compiler commands.
 pub fn worker(entry: &str) -> anyhow::Result<()> {
     if !super::valid_path(entry) {
         bail!("invalid source entry");
     }
     let source = format!("/src/{entry}");
-    let status = Command::new("/toolchain/clang")
+    let status = compiler_command("/toolchain/clang")
         .args([
             "-O2",
             "-Wall",
@@ -373,7 +428,7 @@ pub fn worker(entry: &str) -> anyhow::Result<()> {
     if !status.success() {
         bail!("clang failed: {status}");
     }
-    let status = Command::new("/toolchain/llc")
+    let status = compiler_command("/toolchain/llc")
         .args([
             "-march=bpf",
             "-mcpu=v3",
@@ -431,7 +486,6 @@ pub struct Output {
 }
 pub async fn run(
     toolchain: &Toolchain,
-    root: &Path,
     files: &std::collections::BTreeMap<String, String>,
     entry: &str,
     cancel: &CancellationToken,
@@ -451,10 +505,8 @@ pub async fn run(
     std::fs::write(sdk.join("spinfoam.h"), crate::SDK)?;
     let filter_path = work.path().join("seccomp.bpf");
     std::fs::write(&filter_path, filter())?;
-    let group = Cgroup::new(root)?;
     let cfg = Launch {
         toolchain: toolchain.clone(),
-        cgroup: group.path.clone(),
         sources,
         sdk,
         runner: std::env::current_exe()?,
@@ -476,35 +528,16 @@ pub async fn run(
     let stderr = child.stderr.take().unwrap();
     let out = capture(stdout, MAX_ELF);
     let err = capture(stderr, MAX_DIAGNOSTICS);
-    let monitor = async {
-        loop {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            if group.cpu_used()? > 5_000_000 {
-                bail!("build exceeded 5 CPU seconds");
-            }
-        }
-        #[allow(unreachable_code)]
-        Ok::<(), anyhow::Error>(())
-    };
     let result = tokio::select! {
         _=cancel.cancelled()=>Err(anyhow::anyhow!("build cancelled")),
         _=tokio::time::sleep(Duration::from_secs(15))=>Err(anyhow::anyhow!("build wall deadline exceeded")),
-        result=monitor=>result.and_then(|_|Err(anyhow::anyhow!("build monitor stopped"))),
         result=async {tokio::try_join!(child.wait(),out,err)}=>result.map_err(Into::into),
     };
-    group.kill();
-    // Kill and reap even if a descendant held the compiler pipes open.
+    // The worker is PID 1. Bubblewrap's --die-with-parent kills it when the
+    // launcher dies; the kernel then kills every member of that PID namespace.
+    // kill_on_drop also covers cancellation by dropping this future.
     let _ = child.kill().await;
     let _ = child.wait().await;
-    // The kernel removes descendants asynchronously after cgroup.kill.
-    for _ in 0..100 {
-        if std::fs::read_to_string(group.path.join("cgroup.events"))
-            .is_ok_and(|s| s.lines().any(|l| l == "populated 0"))
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
     let (status, (elf, elf_truncated), (diagnostics, truncated)) = result?;
     let diagnostics = String::from_utf8_lossy(&diagnostics).into_owned();
     if !status.success() {
@@ -518,4 +551,86 @@ pub async fn run(
         diagnostics,
         truncated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compiler_command;
+    use std::{
+        os::unix::process::ExitStatusExt,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn compiler_resource_limits() {
+        if let Ok(mode) = std::env::var("SPINFOAM_LIMIT_TEST_CHILD") {
+            if mode == "cpu" {
+                loop {
+                    std::hint::spin_loop();
+                }
+            }
+            // Both kinds of mappings exceed their respective hard limit.
+            unsafe {
+                for (length, prot) in [
+                    (300 * 1024 * 1024, libc::PROT_READ | libc::PROT_WRITE),
+                    (2 * 1024 * 1024 * 1024, libc::PROT_NONE),
+                ] {
+                    let p = libc::mmap(
+                        std::ptr::null_mut(),
+                        length,
+                        prot,
+                        libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                        -1,
+                        0,
+                    );
+                    assert_eq!(p, libc::MAP_FAILED);
+                    assert_eq!(
+                        std::io::Error::last_os_error().raw_os_error(),
+                        Some(libc::ENOMEM)
+                    );
+                }
+                let pid = libc::fork();
+                if pid == 0 {
+                    libc::_exit(99);
+                }
+                assert_eq!(pid, -1);
+                assert_eq!(
+                    std::io::Error::last_os_error().raw_os_error(),
+                    Some(libc::EPERM)
+                );
+            }
+            // LLVM can still use threads, which share the process budgets.
+            assert_eq!(std::thread::spawn(|| 42).join().unwrap(), 42);
+            return;
+        }
+        for mode in ["memory", "cpu"] {
+            let exe = std::env::current_exe().unwrap();
+            let mut child = compiler_command(exe.to_str().unwrap())
+                .args([
+                    "--exact",
+                    "build::sandbox::tests::compiler_resource_limits",
+                    "--nocapture",
+                ])
+                .env("SPINFOAM_LIMIT_TEST_CHILD", mode)
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("compiler resource limit child exceeded deadline");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            if mode == "cpu" {
+                assert_eq!(status.signal(), Some(libc::SIGKILL));
+            } else {
+                assert!(status.success(), "{status}");
+            }
+        }
+    }
 }

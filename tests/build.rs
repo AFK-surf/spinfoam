@@ -1,8 +1,12 @@
 mod common;
 use common::Client;
-use serde_json::{Value, json};
+#[cfg(target_os = "linux")]
+use serde_json::Value;
+use serde_json::json;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 async fn finish(client: &mut Client, id: &str) -> Value {
     for _ in 0..1000 {
         let status = client.call("sf.build.status", json!({"build_id":id})).await;
@@ -22,11 +26,11 @@ async fn disabled_builds_fail_closed() {
     client.shutdown().await;
 }
 #[tokio::test]
-#[ignore = "requires SPINFOAM_TEST_CGROUP pointing to a delegated cpu/memory/pids subtree"]
+#[cfg(target_os = "linux")]
+#[ignore = "requires unprivileged user namespaces, clang/llc and bubblewrap"]
 async fn sandboxed_compiler_end_to_end() {
-    let root = std::env::var("SPINFOAM_TEST_CGROUP").expect("set SPINFOAM_TEST_CGROUP");
     let dir = tempfile::tempdir().unwrap();
-    let mut client = Client::with_args(&["--compiler-cgroup", &root]).await;
+    let mut client = Client::with_args(&["--enable-builds"]).await;
     assert_eq!(
         client.info["compiler"]["available"], true,
         "{}",
@@ -133,48 +137,43 @@ async fn sandboxed_compiler_end_to_end() {
         let result = finish(&mut client, build["build_id"].as_str().unwrap()).await;
         assert_eq!(result["state"], "succeeded", "{result}");
     }
-    // Cancellation is acknowledged only after the launcher and cgroup have been reaped.
-    let source = format!(
-        "#include \"spinfoam.h\"\nSF_MAIN int main(void){{return {};}}",
-        (0..10000)
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join("+")
-    );
+    // Cancel while a real compiler is running and check the entire namespace dies.
     let build = client
         .call(
             "sf.build.submit",
-            json!({"sdk_version":1,"entry":"main.c","files":{"main.c":source}}),
+            json!({"sdk_version":1,"entry":"cancel.c","files":{"cancel.c":bomb}}),
         )
         .await;
+    let mut children = Vec::new();
+    for _ in 0..200 {
+        children = descendants(client.child.id().unwrap());
+        if children.len() >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(children.len() >= 3, "compiler never started");
     let status = client
         .call("sf.build.cancel", json!({"build_id":build["build_id"]}))
         .await;
     assert_eq!(status["state"], "cancelled");
-    client.shutdown().await;
-    assert_eq!(
-        std::fs::read_dir(&root)
-            .unwrap()
-            .filter(|e| e
-                .as_ref()
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with("spinfoam-"))
-            .count(),
-        0,
-        "build cgroups leaked"
+    for _ in 0..200 {
+        if children.iter().all(|pid| !is_live(*pid)) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(
+        children.iter().all(|pid| !is_live(*pid)),
+        "sandbox descendants survived cancellation: {children:?}"
     );
+    client.shutdown().await;
 }
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn missing_compiler_tools_fail_closed() {
-    let client = Client::with_env(
-        &["--compiler-cgroup", "/nonexistent-spinfoam-test-cgroup"],
-        &[("PATH", "")],
-    )
-    .await;
+    let client = Client::with_env(&["--enable-builds"], &[("PATH", "")]).await;
     assert_eq!(client.info["compiler"]["available"], false);
     assert!(
         client.info["compiler"]["reason"]
@@ -183,4 +182,25 @@ async fn missing_compiler_tools_fail_closed() {
             .contains("clang is not in PATH")
     );
     client.shutdown().await;
+}
+
+// /proc checks are confined to the sandbox integration test, never the runtime.
+#[cfg(target_os = "linux")]
+fn descendants(pid: u32) -> Vec<u32> {
+    let children =
+        std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/children")).unwrap_or_default();
+    let mut result = Vec::new();
+    for child in children.split_whitespace().filter_map(|s| s.parse().ok()) {
+        result.push(child);
+        result.extend(descendants(child));
+    }
+    result
+}
+#[cfg(target_os = "linux")]
+fn is_live(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        !stat
+            .rsplit_once(") ")
+            .is_some_and(|(_, tail)| tail.starts_with("Z ") || tail.starts_with("X "))
+    })
 }

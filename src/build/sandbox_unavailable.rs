@@ -16,7 +16,6 @@ pub fn worker(_: &str) -> anyhow::Result<()> {
 }
 pub async fn run(
     _: &Toolchain,
-    _: &Path,
     _: &BTreeMap<String, String>,
     _: &str,
     _: &CancellationToken,
