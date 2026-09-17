@@ -1,12 +1,9 @@
 mod common;
 use common::Client;
-#[cfg(target_os = "linux")]
 use serde_json::Value;
 use serde_json::json;
-#[cfg(target_os = "linux")]
 use std::time::Duration;
 
-#[cfg(target_os = "linux")]
 async fn finish(client: &mut Client, id: &str) -> Value {
     for _ in 0..1000 {
         let status = client.call("sf.build.status", json!({"build_id":id})).await;
@@ -26,8 +23,7 @@ async fn disabled_builds_fail_closed() {
     client.shutdown().await;
 }
 #[tokio::test]
-#[cfg(target_os = "linux")]
-#[ignore = "requires unprivileged user namespaces, clang/llc and bubblewrap"]
+#[ignore = "requires LLVM and a working platform sandbox"]
 async fn sandboxed_compiler_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
     let mut client = Client::with_args(&["--enable-builds"]).await;
@@ -92,7 +88,13 @@ async fn sandboxed_compiler_end_to_end() {
         status["result"]["error"]
             .as_str()
             .unwrap()
+            .to_lowercase()
             .contains("file not found")
+            || status["result"]["error"]
+                .as_str()
+                .unwrap()
+                .to_lowercase()
+                .contains("operation not permitted")
     );
     // Invalid C reports diagnostics and leaves compilation usable.
     let build = client
@@ -137,7 +139,8 @@ async fn sandboxed_compiler_end_to_end() {
         let result = finish(&mut client, build["build_id"].as_str().unwrap()).await;
         assert_eq!(result["state"], "succeeded", "{result}");
     }
-    // Cancel while a real compiler is running and check the entire namespace dies.
+    // Cancel while a compiler is running and check its processes disappear.
+    let minimum_children = if cfg!(target_os = "linux") { 3 } else { 1 };
     let build = client
         .call(
             "sf.build.submit",
@@ -147,12 +150,12 @@ async fn sandboxed_compiler_end_to_end() {
     let mut children = Vec::new();
     for _ in 0..200 {
         children = descendants(client.child.id().unwrap());
-        if children.len() >= 3 {
+        if children.len() >= minimum_children {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    assert!(children.len() >= 3, "compiler never started");
+    assert!(children.len() >= minimum_children, "compiler never started");
     let status = client
         .call("sf.build.cancel", json!({"build_id":build["build_id"]}))
         .await;
@@ -170,7 +173,6 @@ async fn sandboxed_compiler_end_to_end() {
     client.shutdown().await;
 }
 
-#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn missing_compiler_tools_fail_closed() {
     let client = Client::with_env(&["--enable-builds"], &[("PATH", "")]).await;
@@ -203,4 +205,30 @@ fn is_live(pid: u32) -> bool {
             .rsplit_once(") ")
             .is_some_and(|(_, tail)| tail.starts_with("Z ") || tail.starts_with("X "))
     })
+}
+
+#[cfg(target_os = "macos")]
+fn descendants(pid: u32) -> Vec<u32> {
+    let mut pids = [0i32; 128];
+    let bytes = unsafe {
+        libc::proc_listchildpids(
+            pid as i32,
+            pids.as_mut_ptr().cast(),
+            std::mem::size_of_val(&pids) as i32,
+        )
+    };
+    let mut result = Vec::new();
+    for child in pids
+        .iter()
+        .take(bytes.max(0) as usize / 4)
+        .filter(|p| **p > 0)
+    {
+        result.push(*child as u32);
+        result.extend(descendants(*child as u32));
+    }
+    result
+}
+#[cfg(target_os = "macos")]
+fn is_live(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
 }

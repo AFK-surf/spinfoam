@@ -8,7 +8,7 @@ owns external services, credentials, persistence and distributed orchestration.
 The async-ebpf dependency is pinned directly to GitHub commit
 `7e8a7cbce195d68a1d579608b7a28b55f6fce7fd`. Linux GNU and macOS binaries are built for x86_64 and arm64.
 The upstream formal verification applies to the x86_64 core; it does not
-extend to the arm64 backend. The compiler sandbox requires Linux.
+extend to the arm64 backend. Compiler builds use Bubblewrap on Linux and sandbox-exec on macOS.
 Less than 1 MB per active program is a design target, **not an enforced quota**.
 
 ## Build and run
@@ -38,9 +38,11 @@ webhook listener, secrets or distributed coordination are embedded in spinfoam.
 
 ## Enable sandboxed builds
 
-Install Clang/LLVM and Bubblewrap and put `clang`, `llc`, `bwrap` and `ldd`
-in PATH. spinfoam discovers the tools and their shared libraries automatically.
-LLVM 19.1.7 and Bubblewrap 0.12.0 from Debian 13 were used for local qualification.
+Install LLVM and put `clang` and `llc` in PATH. Linux also needs Bubblewrap and
+`ldd`; macOS uses `/usr/bin/sandbox-exec` and `otool`. spinfoam discovers the
+tools and their shared libraries automatically. On macOS, use Homebrew LLVM
+(`brew install llvm@19`), with `$(brew --prefix llvm@19)/bin` in PATH; Apple's
+system Clang does not provide the required BPF toolchain.
 
 Enable compilation with one flag:
 
@@ -48,7 +50,7 @@ Enable compilation with one flag:
 target/release/spinfoam --enable-builds
 ```
 
-No cgroup delegation or privileged launcher is needed. The host must permit
+No cgroup delegation or privileged launcher is needed. Linux must permit
 unprivileged user namespaces.
 
 The startup probe executes a real sandboxed build. `sf.initialize` reports whether
@@ -57,7 +59,7 @@ seccomp, compiler tools or resource limits are unavailable; existing ELF executi
 remains usable. There is no insecure bypass flag. Restart spinfoam after upgrading the compiler
 tools or libraries; discovery and the build cache are scoped to one process.
 
-Each build uses separate user/mount/PID/network/IPC/UTS namespaces, a
+On Linux, each build uses separate user/mount/PID/network/IPC/UTS namespaces, a
 syscall allowlist, no-new-privileges, dropped capabilities, read-only source/SDK/
 toolchain mounts and a 16 MiB writable tmpfs. Only the discovered libraries and tools
 are mounted, not the host filesystem. Each compiler process has a 1 GiB address-space
@@ -67,9 +69,19 @@ threads share those budgets; a second seccomp filter denies new child processes.
 The trusted worker launches Clang and LLVM sequentially. The build also has a
 15-second wall deadline, 64-descriptor limit and 16 MiB file-size limit.
 
-On cancellation or timeout, Bubblewrap terminates the worker (PID 1 in its private
+On Linux cancellation or timeout, Bubblewrap terminates the worker (PID 1 in its private
 namespace), causing the kernel to kill the remaining sandbox processes. Builds
 return retrievable ELF artifacts through the same JSON-RPC connection.
+
+On macOS, each compiler runs directly under a deny-by-default Seatbelt profile
+using `sandbox-exec`. Only source/SDK files, discovered tool libraries and system
+libraries are readable. Each stage can write only its designated output file;
+network access, forking and unrelated host files are denied. CPU, file-size and
+descriptor limits apply per process, with a shared 15-second build deadline.
+A monitor samples physical footprint every 25 ms and terminates a compiler above
+256 MiB; this is a sampled memory budget that can overshoot, not Linux's hard
+allocation/address-space limit. Cancellation kills and reaps the direct compiler
+process. The compiler cannot spawn descendants.
 
 ## Test and benchmark
 
@@ -81,8 +93,8 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo fmt --all --check
 ```
 
-The additional Linux sandbox integration test needs Clang/LLVM, Bubblewrap and
-working unprivileged user namespaces:
+The additional sandbox integration test requires a working platform sandbox
+and LLVM:
 
 ```sh
 cargo test --release --locked --test build -- --include-ignored --nocapture
@@ -125,8 +137,7 @@ Use version tags such as `v0.1.0`; ordinary branch pushes and pull requests neve
 publish releases. Each release contains four tarballs and `SHA256SUMS`.
 The tarballs include the binary, C SDK, examples and documentation.
 
-On macOS, use uploaded eBPF objects or build them on a Linux spinfoam instance;
-the local compiler service reports unavailable. Linux compiler isolation needs
-unprivileged user namespaces and a recent bubblewrap
+Linux compiler isolation needs unprivileged user namespaces and a recent Bubblewrap
 supporting the required namespace and mount controls. Bullseye specifies binary
-glibc compatibility, not that its stock kernel/bubblewrap supports the sandbox.
+glibc compatibility, not that its stock kernel/Bubblewrap supports the sandbox.
+macOS compiler isolation is tested on both Intel and Apple Silicon.

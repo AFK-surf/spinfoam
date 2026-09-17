@@ -211,7 +211,7 @@ pub fn launch(path: &Path) -> anyhow::Result<()> {
     if unsafe { libc::fcntl(filter.as_raw_fd(), libc::F_SETFD, 0) } < 0 {
         bail!("fcntl: {}", std::io::Error::last_os_error());
     }
-    let mut cmd = Command::new(&cfg.toolchain.bwrap);
+    let mut cmd = Command::new(&cfg.toolchain.sandbox);
     cmd.args([
         "--unshare-user",
         "--unshare-pid",

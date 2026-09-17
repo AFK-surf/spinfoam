@@ -6,7 +6,7 @@ struct Args {
     /// Print the self-contained C SDK and exit.
     #[arg(long)]
     dump_sdk: bool,
-    /// Enable sandboxed C builds using clang, llc and bwrap from PATH.
+    /// Enable sandboxed C builds using LLVM and the platform sandbox.
     #[arg(long)]
     enable_builds: bool,
     #[arg(long, hide = true)]

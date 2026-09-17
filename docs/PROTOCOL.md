@@ -132,7 +132,7 @@ plus headers, little-endian BPF v3, and 4096-byte frames.
 
 Submission returns a `build_id` and status. `sf.build.status` and `sf.build.cancel`
 take `{ "build_id": "b1" }`. States: `queued`, `running`, `succeeded`, `failed`,
-`cancelled`. Cancellation terminates the sandbox through Bubblewrap and waits for the launcher to exit. `sf.build.finished` is an
+`cancelled`. Cancellation terminates the platform sandbox and waits for the launcher/compiler to exit. `sf.build.finished` is an
 advisory notification; query status for the authoritative result.
 
 Successful `result` fields include `artifact_id`, `sha256`, `sdk_version`, `cached`,

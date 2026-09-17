@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 pub mod sandbox;
-#[cfg(not(target_os = "linux"))]
-#[path = "sandbox_unavailable.rs"]
+#[cfg(target_os = "macos")]
+#[path = "sandbox_macos.rs"]
 pub mod sandbox;
 pub mod toolchain;
 use crate::{
@@ -124,9 +124,6 @@ pub struct Builds {
 impl Builds {
     pub async fn new(config: Option<Config>, out: Outbox) -> Rc<Self> {
         let setup = async {
-            if !cfg!(target_os = "linux") {
-                anyhow::bail!("sandboxed compilation currently requires Linux");
-            }
             let _config = config
                 .ok_or_else(|| anyhow::anyhow!("pass --enable-builds to enable compilation"))?;
             let toolchain = tokio::task::spawn_blocking(Toolchain::discover).await??;

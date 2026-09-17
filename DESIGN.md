@@ -202,6 +202,8 @@ For each build, an independently exec'd sandbox launcher creates a fresh Linux u
 
 Use inherited process limits: 1 GiB virtual address space, 256 MiB data/anonymous allocations and 5 CPU seconds per compiler process, plus a 15-second wall deadline and output/file/FD limits. These bounds do not promise aggregate RSS, no-swap operation, a process-count quota or CPU bandwidth control. Compiler threads share their process budgets. Install a second seccomp filter in the compiler child that denies fork/vfork and permits clone only for threads; clone3 returns ENOSYS for libc fallback. The trusted worker launches Clang and LLVM sequentially. Enforce aggregate workspace bytes through the 16 MiB tmpfs. No cgroup setup or delegation is required. Build support fails closed if isolation or required limits cannot be established, advertising `SANDBOX_UNAVAILABLE`; execution of already-built objects remains available.
 
+On macOS, supervise each compiler directly under `sandbox-exec`. A deny-by-default Seatbelt profile grants reads only for staged source/SDK files, discovered libraries and immutable system library directories, and grants writes only for the stage's designated output file. Deny networking, process-fork and unrelated file data access. Discover Mach-O dependencies through otool, including loader paths and rpaths. Apply per-process CPU/file-size/descriptor limits and a shared wall deadline. Because macOS reserves large shared-cache address ranges, use a 25 ms physical-footprint monitor with a 256 MiB threshold instead of the Linux virtual-address limit. This is a sampled threshold and can overshoot. Cancellation kills and reaps the direct compiler, which is forbidden from creating child processes. The startup probe must compile successfully through the actual platform sandbox.
+
 Start with one concurrent build and a bounded FIFO queue. Concurrently drain diagnostics while compiling so a full pipe cannot deadlock the child. Truncate capture while continuing to drain. On timeout/cancel, terminate Bubblewrap, whose parent-death chain kills the worker running as PID 1; the kernel then kills the rest of that PID namespace. Reap the launcher, remove the workspace and release the concurrency permit. Do not rely on killing just the clang parent.
 
 Pin a tested clang/llc pair and invoke fixed argument arrays, following zeroserve:
@@ -230,7 +232,7 @@ Capability RPCs are extensible without growing spinfoam's trusted networking sur
 
 ## 10. Implementation and qualification
 
-Suggested crate layout: one binary plus an internal library, with `protocol/`, `control/`, `runtime/{object,tokio_adapter}`, `helpers/`, `build/{supervisor,sandbox,toolchain}`, `sdk/spinfoam.h`, `examples/` and `bench/`. Use Tokio, serde/serde_json, async-ebpf, a bounded framing implementation, tracing to stderr, and small platform syscall wrappers. The compiler sandbox is Linux-only; macOS runs uploaded objects and reports local builds unavailable. Avoid adding a distributed-runtime framework.
+Suggested crate layout: one binary plus an internal library, with `protocol/`, `control/`, `runtime/{object,tokio_adapter}`, `helpers/`, `build/{supervisor,sandbox,toolchain}`, `sdk/spinfoam.h`, `examples/` and `bench/`. Use Tokio, serde/serde_json, async-ebpf, a bounded framing implementation, tracing to stderr, and small platform syscall wrappers. Use Bubblewrap on Linux and sandbox-exec on macOS. Avoid adding a distributed-runtime framework.
 
 Deliver in this order:
 

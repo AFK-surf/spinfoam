@@ -55,6 +55,8 @@ jobs:
       - run: echo "$(brew --prefix llvm@19)/bin" >> "$GITHUB_PATH"
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+      - name: Test Seatbelt builds
+        run: cargo test --release --locked --test build -- --include-ignored --nocapture
       - run: cargo build --release --locked --target ${{ matrix.target }}
       - run: target/${{ matrix.target }}/release/spinfoam --version
       - run: python3 scripts/package.py ${{ matrix.target }}
