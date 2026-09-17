@@ -210,7 +210,7 @@ fn is_live(pid: u32) -> bool {
 #[cfg(target_os = "macos")]
 fn descendants(pid: u32) -> Vec<u32> {
     let mut pids = [0i32; 128];
-    let bytes = unsafe {
+    let count = unsafe {
         libc::proc_listchildpids(
             pid as i32,
             pids.as_mut_ptr().cast(),
@@ -220,7 +220,7 @@ fn descendants(pid: u32) -> Vec<u32> {
     let mut result = Vec::new();
     for child in pids
         .iter()
-        .take(bytes.max(0) as usize / 4)
+        .take(count.max(0) as usize)
         .filter(|p| **p > 0)
     {
         result.push(*child as u32);
