@@ -218,11 +218,7 @@ fn descendants(pid: u32) -> Vec<u32> {
         )
     };
     let mut result = Vec::new();
-    for child in pids
-        .iter()
-        .take(count.max(0) as usize)
-        .filter(|p| **p > 0)
-    {
+    for child in pids.iter().take(count.max(0) as usize).filter(|p| **p > 0) {
         result.push(*child as u32);
         result.extend(descendants(*child as u32));
     }
