@@ -67,6 +67,10 @@ fn profile(
         quoted(input)?,
         quoted(output)?
     );
+    policy.push_str(&format!(
+        "(allow file-read* (literal {}))\n",
+        quoted(output.parent().context("output has no parent")?)?
+    ));
     for library in toolchain.libraries.values() {
         policy.push_str(&format!(
             "(allow file-read* file-map-executable (literal {}))
