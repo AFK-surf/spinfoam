@@ -19,12 +19,12 @@ A load creates an independent program even if another object has identical bytes
 
 ## Objects
 
-`sf.object.load` takes exactly one of `elf` (standard base64) or `artifact_id`,
+`sf.object.load` takes `elf` (standard base64),
 plus optional `config` (any bounded JSON value, default null) and `capabilities`
 (default empty). It validates/loads the ELF without starting it.
 
 ```json
-{"jsonrpc":"2.0","id":"load","method":"sf.object.load","params":{"artifact_id":"ab1","config":{"run_id":123,"repository":"owner/repo","deduplication_key":"run:123"},"capabilities":[{"name":"github.run.read","arguments":{"run_id":123,"repository":"owner/repo"}},{"name":"agent.notify"}]}}
+{"jsonrpc":"2.0","id":"load","method":"sf.object.load","params":{"elf":"<base64 ELF>","config":{"run_id":123,"repository":"owner/repo","deduplication_key":"run:123"},"capabilities":[{"name":"github.run.read","arguments":{"run_id":123,"repository":"owner/repo"}},{"name":"agent.notify"}]}}
 ```
 
 A capability permits an exact method name. Its optional `arguments` map constrains
@@ -120,7 +120,7 @@ Pass `--enable-builds` to enable the embedded TinyCC-in-eBPF compiler. Without i
 `embedded: true`, and a content-derived `fingerprint`. No host tools are required.
 
 ```json
-{"jsonrpc":"2.0","id":"build","method":"sf.build.submit","params":{"sdk_version":1,"entry":"main.c","files":{"main.c":"#include \"spinfoam.h\"\nSF_MAIN sf_i64 main(void) { sf_sleep_ms(1000); return 42; }"}}}
+{"jsonrpc":"2.0","id":"build","method":"sf.build.compile","params":{"sdk_version":1,"entry":"main.c","files":{"main.c":"#include \"spinfoam.h\"\nSF_MAIN sf_i64 main(void) { sf_sleep_ms(1000); return 42; }"}}}
 ```
 
 `files` is a map of relative source/header names to UTF-8 content, up to 32 files
@@ -131,39 +131,43 @@ There are no custom compiler flags, plugins, environment variables or host paths
 The supplied SDK is read-only. The initial profile supports one C translation unit
 plus headers, little-endian BPF v3, and 4096-byte frames.
 
-Submission returns a `build_id` and status. `sf.build.status` and `sf.build.cancel`
-take `{ "build_id": "b1" }`. States: `queued`, `running`, `succeeded`, `failed`,
-`cancelled`. Cancellation drops the compiler guest invocation and releases its state. `sf.build.finished` is an
-advisory notification; query status for the authoritative result.
+The `sf.build.compile` request waits for compilation and returns `state` and
+`result`. Normal completion states are `succeeded` and `failed`. Session
+shutdown cancels outstanding requests; a final compile response is not guaranteed.
+Other requests continue to be served while compilation is pending. There are no
+build IDs, status/cancel methods, or build completion notifications.
 
-Successful `result` fields include `artifact_id`, `sha256`, `sdk_version`, `cached`,
-`diagnostics` and `diagnostics_truncated`. Failed builds include `kind: "BUILD_FAILED"`
+Successful `result` fields include base64 `elf`, `sha256`, `sdk_version`,
+`toolchain` (compiler fingerprint), `diagnostics` and `diagnostics_truncated`.
+Failed builds include `kind: "BUILD_FAILED"`
 and an error. Diagnostic helpers bound returned text to 16 KiB. ELF output is limited
 to 64 KiB. TinyCC materializes zero globals as PROGBITS and disables common symbols
 because the pinned VM does not accept ordinary BSS relocations. The freestanding
 compiler supports integer C; floating point and signed division/modulo are unsupported. Each build uses a fresh
 8 MiB compiler arena/stack and has a 15-second wall deadline, including load/JIT.
 
-`sf.artifact.get` takes `{ "artifact_id": "ab1" }`, returning base64 `elf`, its hash,
-SDK version and toolchain fingerprint. A successful build can be loaded directly
-by artifact ID. Artifacts expire after 30 minutes and are bounded by 128 entries
-and 8 MiB. Build history is bounded to approximately 128 records; active jobs are
-never evicted. One build runs at a time with at most 16 active/queued jobs.
-Cache keys include all sources, SDK, fixed profile, async-ebpf revision and
-embedded compiler bytes. The cache is process-local; Availability of a cache entry is not a durability guarantee.
+Pass the returned `elf` to `sf.object.load` to load the program. The embedder
+owns storage and reuse of compiled bytes. spinfoam never caches build outputs,
+deduplicates builds, or retains completed build records. Every compile request
+runs a fresh compilation. There are no artifact IDs, retrieval methods, or
+time-based retention policies. The embedder controls compilation concurrency;
+spinfoam imposes no build admission limit or serialization. Each request dynamically
+loads a separate TinyCC program with its own writable data, stack, and virtual files.
+Compiler loading/JIT uses Tokio blocking workers without a spinfoam semaphore.
+Closing the session cancels pending compilation.
 
 ## Errors and transport bounds
 
 Standard JSON-RPC error codes cover parsing, malformed requests, methods and
 parameters. Application errors carry a stable `error.data.kind`:
 `NOT_INITIALIZED`, `BUSY`, `MAILBOX_FULL`, `OBJECT_NOT_FOUND`, `INVALID_OBJECT`,
-`SANDBOX_UNAVAILABLE`, `BUILD_NOT_FOUND`, `ARTIFACT_NOT_FOUND`, and
+`SANDBOX_UNAVAILABLE`, and
 `RESPONSE_TOO_LARGE`. Guest faults appear in object status. Unknown parameters
 are rejected for control methods.
 
 Frames including newline are limited to 256 KiB. An oversized or unterminated
 frame closes the session. Malformed bounded JSON gets a parse error. There are
-48 outstanding request slots, 64 reserved control-output slots, 4 MiB of queued
+48 outstanding non-compilation request slots (compile requests do not consume these), 64 reserved control-output slots, 4 MiB of queued
 object output and 64 KiB queued output per object. Data output is round-robin;
 control output gets priority with an eight-frame burst limit. Excess requests
 get `BUSY`; if even its control reply cannot be queued, the session closes.

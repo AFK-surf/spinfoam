@@ -144,6 +144,21 @@ const HELPERS: &[(&str, Helper)] = &[
     ("tcc_ebpf_close_file", close),
     ("tcc_ebpf_diagnostic", diagnostic),
 ];
+// Compilation admission belongs to the embedder, including loader/JIT work.
+struct CompilerTimeslicer;
+impl Timeslicer for CompilerTimeslicer {
+    async fn sleep(&self, duration: Duration) {
+        tokio::time::sleep(duration).await;
+    }
+    async fn yield_now(&self) {
+        tokio::task::yield_now().await;
+    }
+    async fn run_blocking<T: Send + 'static>(&self, f: impl FnOnce() -> T + Send + 'static) -> T {
+        tokio::task::spawn_blocking(f)
+            .await
+            .expect("compiler worker panicked")
+    }
+}
 pub async fn run(
     runtime: &Runtime,
     files: &BTreeMap<String, String>,
@@ -151,8 +166,10 @@ pub async fn run(
     cancel: &CancellationToken,
 ) -> anyhow::Result<Output> {
     let operation = async {
-        let loaded = runtime
-            .timeslicer
+        // Share only immutable ELF bytes. Each request loads a new program:
+        // async-ebpf forbids concurrent calls on a program with writable data.
+        let timeslicer = CompilerTimeslicer;
+        let loaded = timeslicer
             .run_blocking(|| {
                 ProgramLoader::new(
                     &mut rand::thread_rng(),
@@ -189,7 +206,7 @@ pub async fn run(
                     max_run_time_before_throttle: Duration::from_millis(20),
                     throttle_duration: Duration::from_millis(20),
                 },
-                &runtime.timeslicer,
+                &timeslicer,
                 ".text",
                 &mut resources,
                 &calldata,

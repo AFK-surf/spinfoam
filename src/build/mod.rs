@@ -1,22 +1,12 @@
 pub mod compiler;
-use crate::{
-    error::{RpcError, RpcResult},
-    outbox::Outbox,
-};
+use crate::error::{RpcError, RpcResult};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    cell::{Cell, RefCell},
     collections::BTreeMap,
     path::{Component, Path},
     rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::{
-    sync::{Notify, Semaphore},
-    task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -73,54 +63,14 @@ impl Request {
         Ok(())
     }
 }
-struct Artifact {
-    bytes: Vec<u8>,
-    created: Instant,
-    key: String,
-}
-struct Job {
-    id: String,
-    state: Cell<&'static str>,
-    result: RefCell<Value>,
-    cancel: CancellationToken,
-    task: RefCell<Option<JoinHandle<()>>>,
-    done: Notify,
-}
-impl Job {
-    async fn stop(&self) {
-        self.cancel.cancel();
-        loop {
-            let done = self.done.notified();
-            if !matches!(self.state.get(), "queued" | "running") {
-                break;
-            }
-            done.await;
-        }
-        let task = self.task.borrow_mut().take();
-        if let Some(task) = task {
-            let _ = task.await;
-        }
-    }
-    fn status(&self) -> Value {
-        json!({"build_id":self.id,"state":self.state.get(),"result":*self.result.borrow()})
-    }
-}
 pub struct Builds {
     runtime: Rc<crate::runtime::Runtime>,
     unavailable: Option<String>,
     fingerprint: String,
-    jobs: RefCell<BTreeMap<String, Rc<Job>>>,
-    artifacts: RefCell<BTreeMap<String, Artifact>>,
-    next: Cell<u64>,
-    slots: Arc<Semaphore>,
-    out: Outbox,
+    cancel: CancellationToken,
 }
 impl Builds {
-    pub async fn new(
-        config: Option<Config>,
-        out: Outbox,
-        runtime: Rc<crate::runtime::Runtime>,
-    ) -> Rc<Self> {
+    pub async fn new(config: Option<Config>, runtime: Rc<crate::runtime::Runtime>) -> Rc<Self> {
         Rc::new(Self {
             runtime,
             unavailable: config
@@ -134,183 +84,42 @@ impl Builds {
                 ]
                 .concat(),
             ),
-            jobs: Default::default(),
-            artifacts: Default::default(),
-            next: Cell::new(0),
-            slots: Arc::new(Semaphore::new(1)),
-            out,
+            cancel: CancellationToken::new(),
         })
     }
     pub fn info(&self) -> Value {
         json!({"available":self.unavailable.is_none(),"reason":self.unavailable,"fingerprint":self.fingerprint,"name":"tinycc-in-ebpf","revision":compiler::REVISION,"target":"bpfel","embedded":true})
     }
-    pub fn submit(self: &Rc<Self>, params: Value) -> RpcResult {
+    pub async fn compile(&self, params: Value) -> RpcResult {
         let request: Request = serde_json::from_value(params).map_err(RpcError::params)?;
         request.validate()?;
         if let Some(reason) = &self.unavailable {
             return Err(RpcError::new(-32020, "SANDBOX_UNAVAILABLE", reason));
         }
-        self.expire();
-        if self
-            .jobs
-            .borrow()
-            .values()
-            .filter(|j| matches!(j.state.get(), "queued" | "running"))
-            .count()
-            >= 16
-        {
-            return Err(RpcError::busy("build queue is full"));
+        let output =
+            compiler::run(&self.runtime, &request.files, &request.entry, &self.cancel).await;
+        if self.cancel.is_cancelled() {
+            return Ok(json!({"state":"cancelled","result":null}));
         }
-        let serial = self
-            .next
-            .get()
-            .checked_add(1)
-            .ok_or_else(|| RpcError::busy("build IDs exhausted"))?;
-        self.next.set(serial);
-        let id = format!("b{serial}");
-        let key = crate::sha256(
-            &serde_json::to_vec(&json!({"toolchain":self.fingerprint,"request":request})).unwrap(),
-        );
-        let hit = self
-            .artifacts
-            .borrow()
-            .iter()
-            .find(|(_, a)| a.key == key)
-            .map(|(id, a)| (id.clone(), crate::sha256(&a.bytes)));
-        let job = Rc::new(Job {
-            id: id.clone(),
-            state: Cell::new("queued"),
-            result: RefCell::new(Value::Null),
-            cancel: CancellationToken::new(),
-            task: RefCell::new(None),
-            done: Notify::new(),
-        });
-        if let Some((artifact, hash)) = hit {
-            job.state.set("succeeded");
-            job.result.replace(json!({"artifact_id":artifact,"sha256":hash,"cached":true,"sdk_version":1,"diagnostics":"","diagnostics_truncated":false}));
-        } else {
-            let this = self.clone();
-            let task_job = job.clone();
-            let task = tokio::task::spawn_local(async move {
-                let job = task_job;
-                let permit = tokio::select! {biased;_=job.cancel.cancelled()=>None,p=this.slots.clone().acquire_owned()=>p.ok()};
-                if let Some(_permit) = permit {
-                    job.state.set("running");
-                    let result =
-                        compiler::run(&this.runtime, &request.files, &request.entry, &job.cancel)
-                            .await;
-                    if job.cancel.is_cancelled() {
-                        job.state.set("cancelled");
-                    } else {
-                        match result {
-                            Ok(mut output) => {
-                                if output.diagnostics.len() > 16 * 1024 {
-                                    truncate(&mut output.diagnostics, 16 * 1024);
-                                    output.truncated = true;
-                                }
-                                let artifact_id = format!("a{}", job.id);
-                                let hash = crate::sha256(&output.elf);
-                                this.artifacts.borrow_mut().insert(
-                                    artifact_id.clone(),
-                                    Artifact {
-                                        bytes: output.elf,
-                                        created: Instant::now(),
-                                        key,
-                                    },
-                                );
-                                job.result.replace(json!({"artifact_id":artifact_id,"sha256":hash,"cached":false,"sdk_version":1,"diagnostics":output.diagnostics,"diagnostics_truncated":output.truncated}));
-                                job.state.set("succeeded");
-                                this.expire();
-                            }
-                            Err(e) => {
-                                let mut error = format!("{e:#}");
-                                truncate(&mut error, 16 * 1024);
-                                job.result
-                                    .replace(json!({"kind":"BUILD_FAILED","error":error}));
-                                job.state.set("failed");
-                            }
-                        }
-                    }
-                } else {
-                    job.state.set("cancelled");
-                }
-                job.done.notify_waiters();
-                this.out.try_control(
-                    json!({"jsonrpc":"2.0","method":"sf.build.finished","params":job.status()}),
-                );
-            });
-            job.task.replace(Some(task));
-        }
-        let status = job.status();
-        self.jobs.borrow_mut().insert(id, job);
-        Ok(status)
-    }
-    fn expire(&self) {
-        let mut artifacts = self.artifacts.borrow_mut();
-        artifacts.retain(|_, a| a.created.elapsed() < Duration::from_secs(1800));
-        while artifacts.len() > 128
-            || artifacts.values().map(|a| a.bytes.len()).sum::<usize>() > 8 * 1024 * 1024
-        {
-            let oldest = artifacts
-                .iter()
-                .min_by_key(|(_, a)| a.created)
-                .map(|(id, _)| id.clone())
-                .unwrap();
-            artifacts.remove(&oldest);
-        }
-        let mut jobs = self.jobs.borrow_mut();
-        while jobs.len() >= 128 {
-            let oldest = jobs
-                .iter()
-                .find(|(_, j)| !matches!(j.state.get(), "queued" | "running"))
-                .map(|(id, _)| id.clone());
-            if let Some(id) = oldest {
-                jobs.remove(&id);
-            } else {
-                break;
+        match output {
+            Ok(output) => Ok(json!({"state":"succeeded","result":{
+                "sha256":crate::sha256(&output.elf),
+                "elf":STANDARD.encode(output.elf),
+                "sdk_version":1,
+                "toolchain":self.fingerprint,
+                "diagnostics":output.diagnostics,
+                "diagnostics_truncated":output.truncated
+            }})),
+            Err(e) => {
+                let mut error = format!("{e:#}");
+                truncate(&mut error, 16 * 1024);
+                Ok(json!({"state":"failed","result":{"kind":"BUILD_FAILED","error":error}}))
             }
         }
     }
-    pub fn status(&self, id: &str) -> RpcResult {
-        Ok(self
-            .jobs
-            .borrow()
-            .get(id)
-            .ok_or_else(|| RpcError::new(-32021, "BUILD_NOT_FOUND", "unknown or expired build"))?
-            .status())
-    }
-    pub async fn cancel(&self, id: &str) -> RpcResult {
-        let job =
-            self.jobs.borrow().get(id).cloned().ok_or_else(|| {
-                RpcError::new(-32021, "BUILD_NOT_FOUND", "unknown or expired build")
-            })?;
-        job.stop().await;
-        Ok(job.status())
-    }
-    pub fn bytes(&self, id: &str) -> Result<Vec<u8>, RpcError> {
-        self.expire();
-        self.artifacts
-            .borrow()
-            .get(id)
-            .map(|a| a.bytes.clone())
-            .ok_or_else(|| {
-                RpcError::new(-32022, "ARTIFACT_NOT_FOUND", "unknown or expired artifact")
-            })
-    }
-    pub fn artifact(&self, id: &str) -> RpcResult {
-        let bytes = self.bytes(id)?;
-        Ok(
-            json!({"artifact_id":id,"sha256":crate::sha256(&bytes),"elf":STANDARD.encode(bytes),"sdk_version":1,"toolchain":self.fingerprint}),
-        )
-    }
     pub async fn shutdown(&self) {
-        let jobs: Vec<_> = self.jobs.borrow().values().cloned().collect();
-        for job in &jobs {
-            job.cancel.cancel();
-        }
-        for job in jobs {
-            job.stop().await;
-        }
+        self.cancel.cancel();
+        // The protocol aborts and joins request tasks before shutdown.
     }
 }
 fn truncate(text: &mut String, max: usize) {

@@ -56,15 +56,16 @@ setup, or toolchain manifest is needed, including on macOS.
 Each build gets a fresh compiler guest with an 8 MiB arena/stack and a memory-only
 filesystem containing the submitted files and SDK. It has no filesystem, network,
 process, or agent RPC capabilities. Builds yield to the same Tokio execution
-thread, have a 15-second deadline, and support cancellation. One build runs at a
-time. Compiler memory is separate from the per-loop memory design target.
+thread, have a 15-second deadline, and are cancelled on session shutdown. The embedder controls compilation concurrency. Compiler memory is separate from the per-loop memory design target.
 
 The freestanding compiler supports integer C and one translation unit plus
 headers. Floating-point compilation and signed division/modulo are unsupported by the fork's BPF backend. Build artifacts remain
 subject to the runtime loader and JIT checks. See [compiler provenance and rebuild
 instructions](vendor/tinycc/README.md) for the pinned fork implementation
 and LGPL license. Building spinfoam requires the prerequisites listed above;
-end-user C builds use only the embedded guest.
+end-user C builds use only the embedded guest. `sf.build.compile` waits for completion
+and returns base64 ELF directly. spinfoam never caches build outputs; the embedder
+owns their storage and reuse and passes ELF bytes to `sf.object.load`.
 
 ## Test and benchmark
 

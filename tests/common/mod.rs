@@ -71,21 +71,20 @@ impl Client {
     pub async fn build_load(&mut self, source: &str, config: Value, capabilities: Value) -> String {
         let build = self
             .call(
-                "sf.build.submit",
+                "sf.build.compile",
                 json!({"sdk_version":1,"entry":"main.c","files":{"main.c":source}}),
             )
             .await;
-        let status = loop {
-            let status = self
-                .call("sf.build.status", json!({"build_id":build["build_id"]}))
-                .await;
-            if !matches!(status["state"].as_str(), Some("queued" | "running")) {
-                break status;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        };
+        let status = build;
         assert_eq!(status["state"], "succeeded", "{status}");
-        self.call("sf.object.load",json!({"artifact_id":status["result"]["artifact_id"],"config":config,"capabilities":capabilities})).await["object_id"].as_str().unwrap().to_owned()
+        self.call(
+            "sf.object.load",
+            json!({"elf":status["result"]["elf"],"config":config,"capabilities":capabilities}),
+        )
+        .await["object_id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
     }
     pub async fn close_input(&mut self) {
         self.input.take();

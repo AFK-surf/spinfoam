@@ -2,7 +2,7 @@
 
 ## Embedded TinyCC — 2026-09-17
 
-The benchmark now compiles its C fixture through `sf.build.submit` using the
+The benchmark now compiles its C fixture through `sf.build.compile` using the
 embedded TinyCC guest. A single build produced the ELF template; every loaded object received its
 own distinct global seed. The compiler remains enabled throughout the run.
 

@@ -23,7 +23,7 @@ pub struct Service {
 impl Service {
     pub async fn new(out: Outbox, config: Option<crate::build::Config>) -> Rc<Self> {
         let runtime = Runtime::new(out.clone());
-        let builds = crate::build::Builds::new(config, out.clone(), runtime.clone()).await;
+        let builds = crate::build::Builds::new(config, runtime.clone()).await;
         Rc::new(Self {
             runtime,
             builds,
@@ -65,25 +65,14 @@ impl Service {
                 #[derive(Deserialize)]
                 #[serde(deny_unknown_fields)]
                 struct Load {
-                    #[serde(default)]
-                    elf: Option<String>,
-                    #[serde(default)]
-                    artifact_id: Option<String>,
+                    elf: String,
                     #[serde(default)]
                     config: Value,
                     #[serde(default)]
                     capabilities: Vec<Capability>,
                 }
                 let load: Load = decode(params)?;
-                let bytes = match (load.elf, load.artifact_id) {
-                    (Some(elf), None) => STANDARD.decode(elf).map_err(RpcError::params)?,
-                    (None, Some(id)) => self.builds.bytes(&id)?,
-                    _ => {
-                        return Err(RpcError::params(
-                            "provide exactly one of elf and artifact_id",
-                        ));
-                    }
-                };
+                let bytes = STANDARD.decode(load.elf).map_err(RpcError::params)?;
                 self.runtime
                     .load(bytes, load.config, load.capabilities)
                     .await
@@ -145,29 +134,10 @@ impl Service {
                 empty(params)?;
                 Ok(json!({"shutdown":true}))
             }
-            "sf.build.submit" => self.builds.submit(params),
-            "sf.build.status" => self.builds.status(&build_id(params)?),
-            "sf.build.cancel" => self.builds.cancel(&build_id(params)?).await,
-            "sf.artifact.get" => {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct Artifact {
-                    artifact_id: String,
-                }
-                self.builds
-                    .artifact(&decode::<Artifact>(params)?.artifact_id)
-            }
+            "sf.build.compile" => self.builds.compile(params).await,
             _ => Err(RpcError::new(-32601, "METHOD_NOT_FOUND", "unknown method")),
         }
     }
-}
-fn build_id(params: Value) -> Result<String, RpcError> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Id {
-        build_id: String,
-    }
-    Ok(decode::<Id>(params)?.build_id)
 }
 fn page_size() -> usize {
     100
@@ -303,7 +273,10 @@ pub async fn serve_with_config<R: AsyncRead + Unpin, W: AsyncWrite + Unpin + 'st
                     if !out.try_control(response(id,Err(RpcError::new(-32600,"DUPLICATE_ID","request ID already outstanding")))){break;}
                     continue;
                 }
-                let permit=match slots.clone().try_acquire_owned(){Ok(p)=>p,Err(_)=>{if !out.try_control(response(id,Err(RpcError::busy("too many requests")))){break;}continue;}};
+                // Compile concurrency is owned by the embedder; preserve control capacity.
+                let permit=if method == "sf.build.compile" {None} else {
+                    match slots.clone().try_acquire_owned(){Ok(p)=>Some(p),Err(_)=>{if !out.try_control(response(id,Err(RpcError::busy("too many requests")))){break;}continue;}}
+                };
                 ids.borrow_mut().insert(id_string.clone());
                 let active=ActiveId{ids:ids.clone(),id:id_string};
                 let service=service.clone();let out=out.clone();let method=method.to_owned();

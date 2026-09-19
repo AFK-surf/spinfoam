@@ -45,7 +45,7 @@ Use `Builder::new_current_thread().enable_all()` with a `LocalSet`. Tokio suppor
 
 Spawn one local Tokio task per loaded object. That task owns its run future and cancellation handling. Tokio schedules runnable tasks; async-ebpf preemption and its Tokio timeslicer provide yield points even for tight guest loops. Waiting objects wake through timers, mailbox events, or RPC completion. Start with this direct integration, without a custom scheduler, weighted queues, or CPU-accounting layer.
 
-Use a small bounded blocking executor for load and lazy JIT. `Timeslicer::run_blocking` acquires admission before submitting work, then awaits completion; do not submit thousands of jobs into an unbounded queue. Tokio's [blocking task API](https://docs.rs/tokio/latest/tokio/task/) runs blocking work on auxiliary threads. Once started, these jobs may outlive cancellation; retain their concurrency permits until actual completion, and observe any memory retained by detached work.
+Use a small bounded blocking executor for application-object load and lazy JIT. Compiler requests use an unrestricted adapter; their admission belongs to the embedder. `Timeslicer::run_blocking` acquires admission before submitting work, then awaits completion; do not submit thousands of jobs into an unbounded queue. Tokio's [blocking task API](https://docs.rs/tokio/latest/tokio/task/) runs blocking work on auxiliary threads. Once started, these jobs may outlive cancellation; retain their concurrency permits until actual completion, and observe any memory retained by detached work.
 
 The requirement is **10,000+ live programs on one execution OS thread**. The process also has async-ebpf's watcher and bounded loading/JIT workers; compiler guests share the execution thread. Exactly one OS thread for the entire process is incompatible with the present async-ebpf preemption mechanism. Report all thread counts in benchmarks.
 
@@ -55,7 +55,7 @@ Use nonblocking stdio pipes through Tokio's Unix FD integration for the initial 
 
 Each loaded object file is an independent execution unit: one `object_id`, one async-ebpf `Program`, one invocation of `spinfoam.main`, private mutable globals, one mailbox, one handle table, and one cancellation token. Configuration and allowed host capabilities attach directly to that object. There is no ownership hierarchy or separate instance API. Loading the same ELF bytes twice creates two independent objects with different IDs and execution state.
 
-A build artifact is just immutable ELF bytes plus hash, SDK ABI and compiler metadata. Building executes the compiler guest, but does not execute the emitted program. `sf.object.load` accepts ELF bytes or an artifact ID and creates a loaded object; the artifact is not a parent runtime entity. Sharing compiled code or mutable state between loaded objects is not required.
+A build artifact is just immutable ELF bytes plus hash, SDK ABI and compiler metadata. Building executes the compiler guest, but does not execute the emitted program. `sf.object.load` accepts ELF bytes and creates a loaded object; the artifact is not a parent runtime entity. Sharing compiled code or mutable state between loaded objects is not required.
 
 Object states: `loaded -> starting -> running -> stopping -> stopped`, with `exited` and `failed` terminal alternatives. `running` includes waiting for timer/event/RPC, exposed separately as a wait reason. Object IDs are never reused within a session; session identity distinguishes process restarts.
 
@@ -71,20 +71,19 @@ Use JSON-RPC 2.0 with one UTF-8 JSON value per line. Embedded newlines are JSON 
 
 Version 1 is a negotiated profile with string IDs, named parameters, and no batch requests. `initialize` advertises protocol/SDK versions, target architecture, compiler availability, effective limits, runtime revision and a new session ID. Reject unsupported versions before accepting work. Method names use `sf.*` for requests to spinfoam and `host.*` for reverse requests. Use direction-specific ID prefixes and session-unique outbound IDs.
 
-Suggested initial framing limit: 256 KiB including JSON/base64 expansion, checked incrementally before allocation beyond the cap. Oversized unterminated frames close the session; bounded malformed frames get parse errors. Enforce JSON depth, collection counts, string lengths and decoded-byte limits too. Cap outstanding control requests and reserve router/writer space for replies, cancellation and shutdown. Event admission must fail promptly instead of blocking the reader behind a full mailbox; host responses must remain routable under load.
+Suggested initial framing limit: 256 KiB including JSON/base64 expansion, checked incrementally before allocation beyond the cap. Oversized unterminated frames close the session; bounded malformed frames get parse errors. Enforce JSON depth, collection counts, string lengths and decoded-byte limits too. Cap outstanding non-compilation control requests and reserve router/writer space for replies, cancellation and shutdown. Event admission must fail promptly instead of blocking the reader behind a full mailbox; host responses must remain routable under load.
 
 | Method | Purpose |
 | --- | --- |
 | `sf.initialize` | Negotiate the session and discover effective limits. |
-| `sf.build.submit/status/cancel` | Queue a bounded compilation job, inspect diagnostics/result, cancel it. |
-| `sf.artifact.get` | Retrieve a completed build's ELF bytes and metadata. |
-| `sf.object.load/start/stop/unload/get/list` | Load ELF bytes or a build artifact with config/capabilities; control its loop and inspect status. Lists are paginated. |
+| `sf.build.compile` | Compile sources and return ELF bytes and diagnostics in the response. |
+| `sf.object.load/start/stop/unload/get/list` | Load ELF bytes with config/capabilities; control its loop and inspect status. Lists are paginated. |
 | `sf.event.deliver` | Deliver `{object_id, event_id, topic, payload}`; return admission result. |
 | `sf.stats` | Bounded process and object counters. |
 | `sf.shutdown` | Stop accepting work, cancel/reap, flush a bounded final response, exit. |
 | `host.call` (reverse request) | Guest requests a named, allowed capability with JSON parameters and deadline. |
 | `host.cancel` (reverse notification) | Best-effort cancellation of a previously issued host request. |
-| `sf.object.state`, `sf.build.finished`, `sf.log` (notifications) | Advisory state/log events; authoritative status remains queryable. |
+| `sf.object.state`, `sf.log` (notifications) | Advisory state/log events; authoritative status remains queryable. |
 
 Use standard JSON-RPC errors for malformed calls and stable application codes for `BUSY`, `MAILBOX_FULL`, `OBJECT_NOT_FOUND`, `CAPABILITY_DENIED`, `BUILD_FAILED`, `SANDBOX_UNAVAILABLE`, `PROGRAM_FAULT`, and `DEADLINE_EXCEEDED`. Expected guest-visible failures become SDK status values, not fatal helper errors.
 
@@ -156,7 +155,7 @@ Use Tokio local task scheduling and async-ebpf's existing preemption/yield/throt
 
 Bound every synchronous helper's work. Signal preemption of generated code does not make arbitrary Rust helper code interruptible. Parse bounded JSON with structural limits; chunk expensive byte work or move it to bounded workers. Cancellation is selected alongside the run future and propagated into awaited helpers. Once preemption returns control, stopping a spinning guest must not require guest cooperation.
 
-Retain simple operational bounds: bounded protocol frames, mailboxes and outgoing queues, a finite handle count, and bounded loader/JIT/build concurrency. These provide backpressure and constrain individual operations; they do not enforce a total resident-memory allowance for a program. Compiler guests have a separate bounded arena and execution deadline. Start with FIFO admission for build/load work; broader workload admission belongs to the embedder.
+Retain simple operational bounds: bounded protocol frames, mailboxes and outgoing queues, a finite handle count, and bounded object loader/JIT concurrency. These provide backpressure and constrain individual operations; they do not enforce a total resident-memory allowance for a program. Compiler guests have a separate bounded arena and execution deadline. Compilation concurrency and admission belong entirely to the embedder.
 
 ## 7. Memory design target
 
@@ -194,9 +193,9 @@ A useful normal-case goal is 150–400 KiB resident per waiting loop while keepi
 
 ## 8. Sandboxed C-to-eBPF builds
 
-`sf.build.submit` accepts SDK version and a bounded map of relative UTF-8 source/header paths to contents, plus an entry source. Suggested initial limits: 128 KiB aggregate source, 32 files, 64 KiB captured diagnostics, 64 KiB output ELF. Paths reject absolute forms, traversal, duplicates after normalization, symlinks, and reserved SDK names. No caller-provided host paths, shell commands, arbitrary flags, plugins, libraries or environment variables. The embedder can read agent-authored local C files and send their contents.
+`sf.build.compile` accepts SDK version and a bounded map of relative UTF-8 source/header paths to contents, plus an entry source. Suggested initial limits: 128 KiB aggregate source, 32 files, 64 KiB captured diagnostics, 64 KiB output ELF. Paths reject absolute forms, traversal, duplicates after normalization, symlinks, and reserved SDK names. No caller-provided host paths, shell commands, arbitrary flags, plugins, libraries or environment variables. The embedder can read agent-authored local C files and send their contents.
 
-Return a build ID immediately. States are `queued/running/succeeded/failed/cancelled`; completion is queryable even if the advisory notification is dropped. A successful build returns an artifact ID, hash, ABI/compiler profile and bounded diagnostics. Artifacts can be loaded directly or exported via `sf.artifact.get` as base64 ELF. Bound artifact retention with a process-wide cache size and expiration; a missing expired artifact is explicit.
+The compile request waits for completion and returns base64 ELF bytes, hash, SDK/compiler metadata and bounded diagnostics. Other requests remain serviceable while compilation is pending. spinfoam never caches build outputs or retains completed build records; every request compiles afresh. The embedder owns artifact storage and reuse and supplies ELF bytes to `sf.object.load`. There are no build/artifact IDs, retrieval methods, completion notifications, or time-based retention policies. Session shutdown cancels outstanding builds.
 
 Generate the TinyCC eBPF object in Cargo's `OUT_DIR` with `build.rs`, and embed
 that output in the Rust executable with `include_bytes!`. Fetch losfair/tinycc at
@@ -222,19 +221,21 @@ The compiler uses an 8 MiB contiguous guest stack as its arena, as in the upstre
 bootstrap runner; per-frame guards are disabled for this compiler guest only.
 The ordinary job runtime retains guarded 4096-byte stack frames. Both remain
 inside async-ebpf's memory cage. Allocation failure and guest faults fail the
-build. One build runs at a time; the queue admits up to 16 active/queued requests.
-Use the runtime's existing thread environment, preemption watcher, bounded JIT
-workers and Tokio timeslicer. Yield after 1 ms and throttle after 20 ms of CPU
+build. The embedder controls compilation concurrency; there is no build queue or
+admission semaphore. Compile requests bypass the generic RPC slot limit.
+Each request dynamically loads a new TinyCC program with independent writable
+data; async-ebpf does not allow concurrent calls on one writable-data program.
+Use the runtime's thread environment and preemption watcher, with a compiler
+timeslicer that dispatches loader/JIT work to Tokio without a spinfoam semaphore. Yield after 1 ms and throttle after 20 ms of CPU
 execution. A 15-second wall deadline includes loading and compilation. Cancellation
 drops the guest invocation and releases its state, without child-process cleanup.
-Outstanding native loader/JIT work retains its worker permit until it finishes.
+Outstanding native loader/JIT work may briefly outlive cancellation.
 The compiler's arena and JIT memory are separate from the active-loop memory target.
 
 Support integer C, one translation unit and virtual headers, with a self-contained
 SDK. Floating-point source and signed division/modulo are unsupported by this upstream port.
 Materialize emitted BSS as PROGBITS and disable common symbols, matching the
-runtime's ELF loader. Cache keys include source files, entry, SDK version, embedded
-compiler bytes, SDK bytes and async-ebpf revision. The compiler has no custom
+runtime's ELF loader. The compiler has no custom
 command line or host-dependent configuration.
 
 The compiler and its output remain untrusted. Bound emitted ELF to 64 KiB and
@@ -263,7 +264,7 @@ Deliver in this order:
 1. **Feasibility harness:** 10,000 long-lived async-ebpf invocations on one Tokio execution thread, with timers, cancellation and distinct objects. Measure resident memory, VMAs, JIT work and stack pooling using the existing runtime APIs.
 2. **Protocol and object lifecycle:** version negotiation, object load/start/stop/unload, full-duplex host calls and event delivery, with adversarial framing and backpressure tests.
 3. **SDK and examples:** all four workloads, handle ownership and error handling, bounded JSON and per-object capability checks.
-4. **Compiler service:** embedded TinyCC guest, build lifecycle, artifact retrieval and isolation tests.
+4. **Compiler service:** embedded TinyCC guest, direct result delivery and isolation tests.
 5. **Qualification:** memory measurements, soak tests and a reproducible performance report; tune defaults from results and freeze v1 ABI/protocol afterward. Aggregate program-memory enforcement is deferred.
 
 Required evidence for release:

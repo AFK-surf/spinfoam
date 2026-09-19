@@ -35,15 +35,10 @@ async def smoke():
     try:
         info = await call("sf.initialize", {"protocol_version": 1})
         assert info["compiler"]["available"] and info["compiler"]["embedded"], info
-        job = await call("sf.build.submit", {"sdk_version": 1, "entry": "main.c", "files": {
+        status = await call("sf.build.compile", {"sdk_version": 1, "entry": "main.c", "files": {
             "main.c": '#include <spinfoam.h>\nvolatile sf_i64 counter; SF_MAIN sf_i64 main(void){sf_sleep_ms(1);return ++counter+41;}'}})
-        for _ in range(2000):
-            status = await call("sf.build.status", {"build_id": job["build_id"]})
-            if status["state"] not in ("queued", "running"):
-                break
-            await asyncio.sleep(0.01)
         assert status["state"] == "succeeded", status
-        obj = await call("sf.object.load", {"artifact_id": status["result"]["artifact_id"]})
+        obj = await call("sf.object.load", {"elf": status["result"]["elf"]})
         await call("sf.object.start", {"object_id": obj["object_id"]})
         for _ in range(1000):
             status = await call("sf.object.get", {"object_id": obj["object_id"]})

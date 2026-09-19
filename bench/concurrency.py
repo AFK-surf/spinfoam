@@ -118,15 +118,9 @@ async def run(args):
     info = await client.open(args.binary.resolve(), args.compiler == 'tinycc')
     before_compile = memory(client.proc.pid)
     if args.compiler == 'tinycc':
-        job = await client.call('sf.build.submit', {'sdk_version': 1, 'entry': 'main.c', 'files': {'main.c': SOURCE}})
-        while True:
-            status = await client.call('sf.build.status', {'build_id': job['build_id']})
-            if status['state'] not in ('queued', 'running'):
-                break
-            await asyncio.sleep(0.01)
+        status = await client.call('sf.build.compile', {'sdk_version': 1, 'entry': 'main.c', 'files': {'main.c': SOURCE}})
         assert status['state'] == 'succeeded', status
-        artifact = await client.call('sf.artifact.get', {'artifact_id': status['result']['artifact_id']})
-        elf = base64.b64decode(artifact['elf'])
+        elf = base64.b64decode(status['result']['elf'])
     else:
         elf = compile_object()
     marker = struct.pack('<Q', MARKER)
