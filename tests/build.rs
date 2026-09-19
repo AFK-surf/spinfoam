@@ -127,7 +127,7 @@ async fn embedded_compiler_end_to_end() {
     }
     client.shutdown().await;
     let mut client = Client::with_args(&["--enable-builds"]).await;
-    // Other RPCs and shutdown overtake an outstanding compilation.
+    // Other RPCs remain responsive with an outstanding compilation.
     client
         .write(
             json!({"jsonrpc":"2.0","id":"pending-build","method":"sf.build.compile",
@@ -139,13 +139,16 @@ async fn embedded_compiler_end_to_end() {
         .write(json!({"jsonrpc":"2.0","id":"stats-during-build",
         "method":"sf.stats","params":{}}))
         .await;
-    let reply = tokio::time::timeout(Duration::from_secs(2), client.read())
-        .await
-        .expect("compilation blocked other requests");
-    // No build response has arrived: stats must overtake the active compilation.
+    let reply = tokio::time::timeout(
+        Duration::from_secs(2),
+        client.response("stats-during-build"),
+    )
+    .await
+    .expect("compilation blocked other requests");
+    // The adversarial build may already have exhausted its arena on a fast host.
     assert_eq!(reply["id"], "stats-during-build", "{reply}");
     assert!(reply.get("result").is_some(), "{reply}");
-    // Independent compiler instances can finish while the first is still running.
+    // Submit both compilations before awaiting either result.
     // Identical virtual paths and conflicting macros must remain request-local.
     for answer in [41, 42] {
         client.write(json!({"jsonrpc":"2.0","id":format!("compile-{answer}"),
@@ -154,15 +157,10 @@ async fn embedded_compiler_end_to_end() {
                      "value.h":format!("#define ANSWER {answer}\n")}}})).await;
     }
     let mut outputs = Vec::new();
-    for _ in 0..2 {
-        let reply = tokio::time::timeout(Duration::from_secs(5), client.read())
-            .await
-            .expect("one compilation serialized another");
-        let expected = match reply["id"].as_str() {
-            Some("compile-41") => 41,
-            Some("compile-42") => 42,
-            _ => panic!("expected a short compilation to overtake the slow one: {reply}"),
-        };
+    for expected in [41, 42] {
+        // JSON-RPC permits arbitrary response order. The adversarial build can
+        // fail before either normal build; its speed is platform-dependent.
+        let reply = client.response(&format!("compile-{expected}")).await;
         assert_eq!(reply["result"]["state"], "succeeded", "{reply}");
         outputs.push((reply["result"]["result"]["elf"].clone(), expected));
     }

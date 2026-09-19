@@ -115,6 +115,12 @@ impl Client {
         let id = format!("test:{}", self.next);
         self.write(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
             .await;
+        self.response(&id).await
+    }
+    pub async fn response(&mut self, id: &str) -> Value {
+        if let Some(i) = self.saved.iter().position(|v| v["id"] == id) {
+            return self.saved.remove(i).unwrap();
+        }
         loop {
             let value = self.read().await;
             if value["id"] == id {
