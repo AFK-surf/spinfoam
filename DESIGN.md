@@ -199,7 +199,7 @@ The compile request waits for completion and returns base64 ELF bytes, hash, SDK
 
 Generate the TinyCC eBPF object in Cargo's `OUT_DIR` with `build.rs`, and embed
 that output in the Rust executable with `include_bytes!`. Fetch losfair/tinycc at
-`120e1619c7b3913e9ec2a10d06e431d17b23648e`. This extends the fork used by async-ebpf's
+`7069256d9287e8f6fcacd575fcbb0b83f2300058`. This extends the fork used by async-ebpf's
 bootstrap test with selectable output targets and optional virtual-file helpers;
 the changes live in the TinyCC fork itself, with no spinfoam patch. Set
 `TCC_EBPF_TARGET=bpf` and `TCC_EBPF_VFS=1`, so both compiler execution and compiler

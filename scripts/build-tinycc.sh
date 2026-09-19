@@ -4,7 +4,7 @@ set -eu
 out=${1:?usage: build-tinycc.sh OUTPUT_DIRECTORY}
 mkdir -p "$out"
 out=$(CDPATH= cd -- "$out" && pwd)
-revision=120e1619c7b3913e9ec2a10d06e431d17b23648e
+revision=7069256d9287e8f6fcacd575fcbb0b83f2300058
 source_dir="$out/tinycc-source"
 if [ ! -d "$source_dir/.git" ]; then
     git init -q "$source_dir"

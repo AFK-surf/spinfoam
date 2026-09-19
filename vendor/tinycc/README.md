@@ -1,7 +1,7 @@
 # TinyCC source provenance
 
 Upstream: https://github.com/losfair/tinycc (branch `ebpf`)
-Revision: `120e1619c7b3913e9ec2a10d06e431d17b23648e`
+Revision: `7069256d9287e8f6fcacd575fcbb0b83f2300058`
 
 This extends the fork used by async-ebpf's bootstrap test with selectable compiler
 output targets and optional virtual-file helpers. All adaptations live in that

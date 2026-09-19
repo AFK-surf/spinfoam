@@ -11,7 +11,7 @@ use std::{any::Any, collections::BTreeMap, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 pub const OBJECT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/compiler.bpf"));
-pub const REVISION: &str = "120e1619c7b3913e9ec2a10d06e431d17b23648e";
+pub const REVISION: &str = "7069256d9287e8f6fcacd575fcbb0b83f2300058";
 const STACK: usize = 8 * 1024 * 1024;
 const MAX_OUTPUT: usize = 64 * 1024;
 #[derive(Default)]
