@@ -216,13 +216,11 @@ impl Runtime {
         if !crate::helpers::valid_value(&config) {
             return Err(RpcError::params("config exceeds JSON limits"));
         }
-        if capabilities.len() > 64
-            || capabilities.iter().any(|c| {
-                c.name.is_empty()
-                    || c.name.len() > 128
-                    || !crate::helpers::valid_value(&json!(c.arguments))
-            })
-        {
+        if capabilities.iter().any(|c| {
+            c.name.is_empty()
+                || c.name.len() > 128
+                || !crate::helpers::valid_value(&json!(c.arguments))
+        }) {
             return Err(RpcError::params("invalid capabilities"));
         }
         let serial = self
