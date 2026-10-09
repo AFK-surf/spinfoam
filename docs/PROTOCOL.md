@@ -17,6 +17,31 @@ compiler availability/fingerprint, limits, and `memory_target_enforced: false`.
 Object IDs are unique within a session. They carry no ownership/group hierarchy.
 A load creates an independent program even if another object has identical bytes.
 
+## Host clock
+
+By default guest time is the machine's. A host that runs on its own clock (a
+test clock, for example) passes `clock` to `sf.initialize`:
+
+```json
+{"jsonrpc":"2.0","id":"init","method":"sf.initialize","params":{"protocol_version":1,"clock":{"monotonic_ms":1000,"unix_ms":1760000000000}}}
+```
+
+Guest time then moves only when the host moves it. `sf_now_mono_ms`,
+`sf_now_unix_ms`, `sf_sleep_ms`, the `sf_event_next` timeout, and the
+`host.call` timeout and `deadline_unix_ms` all use the host's times. spinfoam
+names its earliest timer whenever it changes, with `due_monotonic_ms` null when
+no timer is armed:
+
+```json
+{"jsonrpc":"2.0","method":"sf.clock.next","params":{"due_monotonic_ms":61000}}
+```
+
+`sf.clock.advance` takes `{monotonic_ms, unix_ms}`, fires the timers due by
+then and answers once no object runs guest code, with the next due time:
+`{"next_due_monotonic_ms": null}`. Monotonic time cannot go back. On a host
+clock `sf.event.deliver` also answers only after the guest has acted on the
+event, so the host does not move its clock while a guest still runs.
+
 ## Objects
 
 `sf.object.load` takes `elf` (standard base64),

@@ -79,6 +79,7 @@ Suggested initial framing limit: 256 KiB including JSON/base64 expansion, checke
 | `sf.build.compile` | Compile sources and return ELF bytes and diagnostics in the response. |
 | `sf.object.load/start/stop/unload/get/list` | Load ELF bytes with config/capabilities; control its loop and inspect status. Lists are paginated. |
 | `sf.event.deliver` | Deliver `{object_id, event_id, topic, payload}`; return admission result. |
+| `sf.clock.advance` | On a host clock (`sf.initialize` `clock`), move guest time, fire due timers and answer once no guest runs; `sf.clock.next` notifications name the earliest timer. |
 | `sf.stats` | Bounded process and object counters. |
 | `sf.shutdown` | Stop accepting work, cancel/reap, flush a bounded final response, exit. |
 | `host.call` (reverse request) | Guest requests a named, allowed capability with JSON parameters and deadline. |

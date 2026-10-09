@@ -189,15 +189,17 @@ pub struct Runtime {
     pub(crate) thread: ThreadEnv,
     next: Cell<u64>,
     pub started: Instant,
+    pub clock: crate::clock::Clock,
 }
 impl Runtime {
     pub fn new(out: Outbox) -> Rc<Self> {
         // SAFETY: spinfoam is a standalone executable; these signals are reserved for async-ebpf.
         let global = unsafe { GlobalEnv::new() };
         let thread = global.init_thread(Duration::from_millis(1));
+        let clock = crate::clock::Clock::default();
         Rc::new(Self {
             objects: Default::default(),
-            host: Host::new(out.clone()),
+            host: Host::new(out.clone(), clock.clone()),
             out,
             timeslicer: TokioTimeslicer {
                 workers: Arc::new(Semaphore::new(2)),
@@ -205,6 +207,7 @@ impl Runtime {
             thread,
             next: Cell::new(0),
             started: Instant::now(),
+            clock,
         })
     }
     pub async fn load(
@@ -272,6 +275,25 @@ impl Runtime {
             .cloned()
             .ok_or_else(RpcError::missing)
     }
+    /// Returns once no object runs guest code: each one that runs waits in a
+    /// helper (a timer, its mailbox or a host call). The host of a host clock
+    /// moves the clock again only after this.
+    pub async fn quiet(&self) {
+        loop {
+            let running = self.clock.waking()
+                || self.host.waking()
+                || self.objects.borrow().values().any(|o| {
+                    o.state.get() == State::Starting
+                        || (matches!(o.state.get(), State::Running | State::Stopping)
+                            && (o.wait.get() == "none"
+                                || (o.wait.get() == "event" && !o.mailbox.is_empty())))
+                });
+            if !running {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
     pub fn start(self: &Rc<Self>, id: &str) -> RpcResult {
         let object = self.get(id)?;
         if object.state.get() != State::Loaded {
@@ -296,6 +318,7 @@ impl Runtime {
                 obj.wait.clone(),
                 rt.host.clone(),
                 rt.out.clone(),
+                rt.clock.clone(),
             );
             let mut resources: [&mut dyn Any; 1] = [&mut ctx];
             let timeslice = TimesliceConfig {
