@@ -5,9 +5,8 @@ use crate::{
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
-    time::Duration,
 };
 use tokio::sync::oneshot;
 
@@ -22,6 +21,9 @@ pub struct Host {
     pub session: String,
     out: Outbox,
     ignored: Rc<Cell<u64>>,
+    // Calls answered whose callers have not run yet.
+    woken: Rc<RefCell<HashSet<String>>>,
+    clock: crate::clock::Clock,
 }
 struct CallGuard {
     host: Host,
@@ -31,6 +33,7 @@ struct CallGuard {
 }
 impl Drop for CallGuard {
     fn drop(&mut self) {
+        self.host.woken.borrow_mut().remove(&self.id);
         self.host.out.remove_request(&self.object, &self.id);
         if self.host.pending.borrow_mut().remove(&self.id).is_some() && self.sent {
             self.host.out.try_control(
@@ -40,13 +43,15 @@ impl Drop for CallGuard {
     }
 }
 impl Host {
-    pub fn new(out: Outbox) -> Self {
+    pub fn new(out: Outbox, clock: crate::clock::Clock) -> Self {
         Self {
             pending: Default::default(),
             next: Rc::new(Cell::new(0)),
             session: format!("{:032x}", rand::random::<u128>()),
             out,
             ignored: Default::default(),
+            woken: Default::default(),
+            clock,
         }
     }
     pub fn stats(&self) -> Value {
@@ -81,14 +86,15 @@ impl Host {
         };
         let request = json!({"jsonrpc":"2.0","id":id,"method":"host.call","params":{
             "object_id":object,"capability":capability,"arguments":arguments,
-            "timeout_ms":timeout_ms,"deadline_unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() + timeout_ms as u128,"max_result_bytes":crate::helpers::MAX_VALUE_BYTES
+            "timeout_ms":timeout_ms,"deadline_unix_ms":self.clock.unix_ms() as u128 + timeout_ms as u128,"max_result_bytes":crate::helpers::MAX_VALUE_BYTES
         }});
         let operation = async {
             self.out.data(object, request).await.map_err(|_| CLOSED)?;
             guard.sent = true;
             rx.await.map_err(|_| CLOSED)?
         };
-        tokio::time::timeout(Duration::from_millis(timeout_ms), operation)
+        self.clock
+            .timeout(timeout_ms, operation)
             .await
             .map_err(|_| TIMEOUT)?
     }
@@ -111,7 +117,13 @@ impl Host {
         } else {
             Err(HOST_ERROR)
         };
-        let _ = pending.tx.send(result);
+        if pending.tx.send(result).is_ok() {
+            self.woken.borrow_mut().insert(id.to_owned());
+        }
+    }
+    /// Whether a response's caller has yet to run.
+    pub fn waking(&self) -> bool {
+        !self.woken.borrow().is_empty()
     }
     fn ignore(&self) {
         self.ignored.set(self.ignored.get().saturating_add(1));
@@ -141,7 +153,7 @@ mod tests {
     #[tokio::test]
     async fn timeout_removes_a_request_that_has_not_reached_the_writer() {
         let out = Outbox::default();
-        let host = Host::new(out.clone());
+        let host = Host::new(out.clone(), crate::clock::Clock::default());
         assert_eq!(
             host.call("o1", "read".into(), json!({}), 1).await,
             Err(TIMEOUT)

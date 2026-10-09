@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 pub const MAX_VALUE_BYTES: usize = 16 * 1024;
@@ -32,11 +32,13 @@ pub struct GuestContext {
     wait: Rc<Cell<&'static str>>,
     host: Host,
     out: Outbox,
-    started: Instant,
+    clock: crate::clock::Clock,
+    started_ms: u64,
     log_window: Instant,
     logs: u32,
 }
 impl GuestContext {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         config: Value,
@@ -45,6 +47,7 @@ impl GuestContext {
         wait: Rc<Cell<&'static str>>,
         host: Host,
         out: Outbox,
+        clock: crate::clock::Clock,
     ) -> Self {
         Self {
             id,
@@ -55,7 +58,8 @@ impl GuestContext {
             wait,
             host,
             out,
-            started: Instant::now(),
+            started_ms: clock.monotonic_ms(),
+            clock,
             log_window: Instant::now(),
             logs: 0,
         }
@@ -122,9 +126,9 @@ fn timeout_ms(n: u64) -> u64 {
     n.min(86_400_000)
 }
 fn h_sleep(s: &HelperScope, ms: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u64, ()> {
-    let guard = ctx(s, |c| wait(c, "timer"))?;
+    let (clock, guard) = ctx(s, |c| (c.clock.clone(), wait(c, "timer")))?;
     s.post_task(async move {
-        tokio::time::sleep(Duration::from_millis(timeout_ms(ms))).await;
+        clock.sleep(timeout_ms(ms)).await;
         drop(guard);
         |_: &HelperScope| Ok(0)
     });
@@ -138,13 +142,10 @@ fn h_yield(s: &HelperScope, _: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u6
     Ok(0)
 }
 fn h_mono(s: &HelperScope, _: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u64, ()> {
-    ctx(s, |c| c.started.elapsed().as_millis() as u64)
+    ctx(s, |c| c.clock.monotonic_ms().saturating_sub(c.started_ms))
 }
-fn h_unix(_: &HelperScope, _: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u64, ()> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64)
+fn h_unix(s: &HelperScope, _: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u64, ()> {
+    ctx(s, |c| c.clock.unix_ms())
 }
 fn h_config(s: &HelperScope, _: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u64, ()> {
     ctx(s, |c| c.insert(Handle::Json(c.config.clone())))
@@ -159,10 +160,11 @@ fn h_drop(s: &HelperScope, h: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u64
     })
 }
 fn h_event(s: &HelperScope, ms: u64, _: u64, _: u64, _: u64, _: u64) -> Result<u64, ()> {
-    let (mailbox, guard) = ctx(s, |c| (c.mailbox.clone(), wait(c, "event")))?;
+    let (mailbox, clock, guard) = ctx(s, |c| {
+        (c.mailbox.clone(), c.clock.clone(), wait(c, "event"))
+    })?;
     s.post_task(async move {
-        let result =
-            tokio::time::timeout(Duration::from_millis(timeout_ms(ms)), mailbox.receive()).await;
+        let result = clock.timeout(timeout_ms(ms), mailbox.receive()).await;
         drop(guard);
         move |s: &HelperScope| {
             ctx(s, |c| match result {

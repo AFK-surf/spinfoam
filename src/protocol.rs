@@ -14,6 +14,13 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClockTimes {
+    monotonic_ms: u64,
+    unix_ms: u64,
+}
+
 pub struct Service {
     pub runtime: Rc<Runtime>,
     pub builds: Rc<crate::build::Builds>,
@@ -37,6 +44,9 @@ impl Service {
             #[serde(deny_unknown_fields)]
             struct Init {
                 protocol_version: u32,
+                /// Guest time on the host's clock, from these times on.
+                #[serde(default)]
+                clock: Option<ClockTimes>,
             }
             let init: Init = decode(params)?;
             if init.protocol_version != 1 {
@@ -44,6 +54,13 @@ impl Service {
             }
             if self.initialized.replace(true) {
                 return Err(RpcError::busy("already initialized"));
+            }
+            if let Some(times) = init.clock {
+                self.runtime.clock.use_host(
+                    self.runtime.out.clone(),
+                    times.monotonic_ms,
+                    times.unix_ms,
+                );
             }
             return Ok(
                 json!({"protocol_version":1,"sdk_version":1,"session_id":self.runtime.host.session,
@@ -120,9 +137,24 @@ impl Service {
                 if event.topic.len() > 128 || !crate::helpers::valid_value(&event.payload) {
                     return Err(RpcError::params("event exceeds limits"));
                 }
-                self.runtime.get(&event.object_id)?.deliver(
+                let accepted = self.runtime.get(&event.object_id)?.deliver(
                     json!({"event_id":event.event_id,"topic":event.topic,"payload":event.payload}),
-                )
+                )?;
+                // On a host clock the host waits for the reply before it moves
+                // the clock: the guest has acted on the event by then.
+                if self.runtime.clock.is_host() {
+                    self.runtime.quiet().await;
+                }
+                Ok(accepted)
+            }
+            "sf.clock.advance" => {
+                let times: ClockTimes = decode(params)?;
+                self.runtime
+                    .clock
+                    .advance(times.monotonic_ms, times.unix_ms)
+                    .map_err(RpcError::params)?;
+                self.runtime.quiet().await;
+                Ok(json!({"next_due_monotonic_ms":self.runtime.clock.next_due()}))
             }
             "sf.stats" => {
                 empty(params)?;

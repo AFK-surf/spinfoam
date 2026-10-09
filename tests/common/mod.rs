@@ -23,6 +23,9 @@ impl Client {
         Self::with_env(args, &[]).await
     }
     pub async fn with_env(args: &[&str], env: &[(&str, &str)]) -> Self {
+        Self::with_init(args, env, json!({"protocol_version":1})).await
+    }
+    pub async fn with_init(args: &[&str], env: &[(&str, &str)], init: Value) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_spinfoam"))
             .args(args)
             .envs(env.iter().copied())
@@ -44,9 +47,7 @@ impl Client {
             // Allow startup under heavily loaded CI runners.
             read_timeout: Duration::from_secs(90),
         };
-        let init = client
-            .call("sf.initialize", json!({"protocol_version":1}))
-            .await;
+        let init = client.call("sf.initialize", init).await;
         assert_eq!(init["protocol_version"], 1);
         client.info = init;
         client.read_timeout = Duration::from_secs(20);
